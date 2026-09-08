@@ -1,0 +1,6 @@
+{
+  "name": "DOB Enterprises",
+  "description": "DOB Enterprises - The game development tycoon simulation where you type code to earn cash, hire programmers, launch smash-hit games, and sue rival studios to dominate the leaderboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
