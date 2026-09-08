@@ -5,6 +5,8 @@ import {
   onAuthStateChanged,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut,
   updateProfile,
   User
@@ -503,7 +505,7 @@ export function isUserAdmin(email?: string | null, role?: string): boolean {
 
 export function subscribeToAuth(callback: (user: UserAccount | null) => void): Unsubscribe {
   return onAuthStateChanged(auth, async (fbUser) => {
-    if (!fbUser || fbUser.isAnonymous) {
+    if (!fbUser) {
       callback(null);
       return;
     }
@@ -512,18 +514,20 @@ export function subscribeToAuth(callback: (user: UserAccount | null) => void): U
       const snap = await getDoc(userRef);
       if (snap.exists()) {
         const data = snap.data() as UserAccount;
+        const role: 'admin' | 'player' = isUserAdmin(data.email, data.role) ? 'admin' : (data.role || 'player');
         callback({
           ...data,
           userId: fbUser.uid,
           uid: fbUser.uid,
-          isAnonymous: false
+          role,
+          isAnonymous: fbUser.isAnonymous
         });
-      } else {
+      } else if (!fbUser.isAnonymous) {
         const acc: UserAccount = {
           userId: fbUser.uid,
           uid: fbUser.uid,
           email: fbUser.email || '',
-          studioName: 'DOB Enterprises',
+          studioName: fbUser.displayName || 'DOB Enterprises',
           role: isUserAdmin(fbUser.email) ? 'admin' : 'player',
           isBanned: false,
           isAnonymous: false,
@@ -531,12 +535,135 @@ export function subscribeToAuth(callback: (user: UserAccount | null) => void): U
           updatedAt: Date.now()
         };
         callback(acc);
+      } else {
+        // Anonymous guest with no saved studio profile yet
+        callback(null);
       }
     } catch (err) {
       console.error('Error fetching user auth doc:', err);
       callback(null);
     }
   });
+}
+
+// Instant Studio Cloud Profile (Works even if Email/Password provider is disabled in Firebase console)
+export async function createOrLoginInstantCloudAccount(
+  email: string,
+  studioName: string,
+  initialSaveData?: any
+): Promise<UserAccount> {
+  if (!auth.currentUser) {
+    await initAuth();
+  }
+  const uid = auth.currentUser?.uid || currentUserId || ('dob_' + Math.random().toString(36).substring(2, 9));
+  currentUserId = uid;
+  localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+
+  const cleanEmail = email.trim();
+  const cleanStudio = studioName.trim() || 'DOB Enterprises';
+  const role: 'admin' | 'player' = isUserAdmin(cleanEmail) ? 'admin' : 'player';
+
+  const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+
+  let account: UserAccount;
+  if (snap.exists()) {
+    const existing = snap.data() as UserAccount;
+    account = {
+      ...existing,
+      userId: uid,
+      uid,
+      email: cleanEmail || existing.email,
+      studioName: cleanStudio || existing.studioName,
+      role: isUserAdmin(cleanEmail) ? 'admin' : existing.role,
+      updatedAt: Date.now()
+    };
+    await updateDoc(userRef, {
+      email: account.email,
+      studioName: account.studioName,
+      role: account.role,
+      updatedAt: Date.now()
+    });
+  } else {
+    account = {
+      userId: uid,
+      uid,
+      email: cleanEmail,
+      studioName: cleanStudio,
+      role,
+      isBanned: false,
+      saveData: initialSaveData ? JSON.stringify(initialSaveData) : '',
+      cash: initialSaveData?.cash || 5000,
+      netWorth: initialSaveData?.netWorth || 5000,
+      followers: initialSaveData?.followers || 0,
+      gamesCount: initialSaveData?.releasedGames?.length || 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    await setDoc(userRef, account);
+  }
+
+  await syncStudioToLobby(
+    uid,
+    account.studioName,
+    account.cash || 5000,
+    account.netWorth || 5000,
+    account.followers || 0,
+    account.gamesCount || 0
+  );
+
+  return account;
+}
+
+// Sign in with Google
+export async function loginWithGoogle(initialSaveData?: any): Promise<UserAccount> {
+  const provider = new GoogleAuthProvider();
+  const cred = await signInWithPopup(auth, provider);
+  const uid = cred.user.uid;
+  const email = cred.user.email || '';
+  currentUserId = uid;
+  localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+
+  const role: 'admin' | 'player' = isUserAdmin(email) ? 'admin' : 'player';
+  const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+
+  let account: UserAccount;
+  if (snap.exists()) {
+    account = snap.data() as UserAccount;
+    if (isUserAdmin(email) && account.role !== 'admin') {
+      account.role = 'admin';
+      await updateDoc(userRef, { role: 'admin' });
+    }
+  } else {
+    account = {
+      userId: uid,
+      uid,
+      email,
+      studioName: cred.user.displayName || 'DOB Enterprises',
+      role,
+      isBanned: false,
+      saveData: initialSaveData ? JSON.stringify(initialSaveData) : '',
+      cash: initialSaveData?.cash || 5000,
+      netWorth: initialSaveData?.netWorth || 5000,
+      followers: initialSaveData?.followers || 0,
+      gamesCount: initialSaveData?.releasedGames?.length || 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    await setDoc(userRef, account);
+  }
+
+  await syncStudioToLobby(
+    uid,
+    account.studioName,
+    account.cash || 5000,
+    account.netWorth || 5000,
+    account.followers || 0,
+    account.gamesCount || 0
+  );
+
+  return account;
 }
 
 // Register new account
@@ -555,6 +682,7 @@ export async function registerAccount(
 
   const userAccount: UserAccount = {
     userId: uid,
+    uid,
     email: email.trim(),
     studioName: studioName.trim() || 'DOB Enterprises',
     role,
@@ -607,6 +735,7 @@ export async function loginAccount(email: string, pass: string): Promise<UserAcc
     const role: 'admin' | 'player' = isUserAdmin(email) ? 'admin' : 'player';
     account = {
       userId: uid,
+      uid,
       email: email.trim(),
       studioName: 'DOB Enterprises',
       role,
