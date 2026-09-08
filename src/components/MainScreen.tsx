@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Terminal, 
   Sparkles, 
@@ -15,9 +15,13 @@ import {
   Lock,
   Globe,
   Cloud,
-  ShieldAlert
+  ShieldAlert,
+  User,
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import { soundManager } from '../utils/audio';
+import { generateRandomGuestName, extractAccountName } from '../utils/nameGenerator';
 
 interface MainScreenProps {
   currentStudioName: string;
@@ -28,20 +32,11 @@ interface MainScreenProps {
   onEnterGame: (chosenName: string) => void;
   onResetGame: () => void;
   onOpenMultiplayer?: () => void;
-  currentUser?: { email?: string; role?: string } | null;
+  currentUser?: { email?: string; role?: string; displayName?: string; studioName?: string } | null;
   isAdmin?: boolean;
   onOpenAccount?: () => void;
   onOpenAdmin?: () => void;
 }
-
-const NAME_PRESETS = [
-  'DOB Enterprises',
-  'DOB Cyberworks',
-  'DOB Interactive',
-  'DOB ByteLabs',
-  'DOB Quantum Games',
-  'DOB Systems .io'
-];
 
 export const MainScreen: React.FC<MainScreenProps> = ({
   currentStudioName,
@@ -57,11 +52,52 @@ export const MainScreen: React.FC<MainScreenProps> = ({
   onOpenAccount,
   onOpenAdmin
 }) => {
-  const [studioName, setStudioName] = useState(currentStudioName || 'DOB Enterprises');
+  // Determine initial name for slot:
+  // - If user has an account (Google or email), auto-fill with their Google name or email name
+  // - For non-account players or guests, the slot must be empty upon starting!
+  const getInitialStudioName = () => {
+    if (currentUser) {
+      const autoAccountName = extractAccountName(currentUser);
+      if (autoAccountName) return autoAccountName;
+    }
+    // If returning player already customized their name in a previous session (and not default placeholder)
+    if (currentStudioName && currentStudioName !== 'DOB Enterprises') {
+      return currentStudioName;
+    }
+    // Starting fresh / non-account guest: empty slot
+    return '';
+  };
+
+  const [studioName, setStudioName] = useState<string>(getInitialStudioName);
+  const [autoFilled, setAutoFilled] = useState<boolean>(Boolean(currentUser && extractAccountName(currentUser)));
   const [soundEnabled, setSoundEnabled] = useState(soundManager.enabled);
   const [inputFocused, setInputFocused] = useState(false);
+  const [randomPresets, setRandomPresets] = useState<string[]>(() => [
+    'PixelForge',
+    'CyberPulse Games',
+    'NeonByte Labs',
+    'QuantumGlitch',
+    'RetroWave Studio'
+  ]);
 
   const hasExistingProgress = cash > 0 || releasedGamesCount > 0 || followers > 0;
+
+  // Auto-fill when currentUser logs in or loads
+  useEffect(() => {
+    if (currentUser) {
+      const autoAccountName = extractAccountName(currentUser);
+      if (autoAccountName) {
+        // Only override if slot is currently blank or still default
+        setStudioName((prev) => {
+          if (!prev.trim() || prev === 'DOB Enterprises') {
+            setAutoFilled(true);
+            return autoAccountName;
+          }
+          return prev;
+        });
+      }
+    }
+  }, [currentUser]);
 
   const handleToggleSound = () => {
     const next = !soundEnabled;
@@ -72,14 +108,29 @@ export const MainScreen: React.FC<MainScreenProps> = ({
 
   const handleRandomize = () => {
     soundManager.playKeyClick();
-    const remaining = NAME_PRESETS.filter((p) => p !== studioName);
-    const chosen = remaining[Math.floor(Math.random() * remaining.length)];
+    const chosen = generateRandomGuestName();
     setStudioName(chosen);
+    setAutoFilled(false);
+  };
+
+  const handleRerollPresets = () => {
+    soundManager.playKeyClick();
+    setRandomPresets([
+      generateRandomGuestName(),
+      generateRandomGuestName(),
+      generateRandomGuestName(),
+      generateRandomGuestName()
+    ]);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const finalName = studioName.trim() || 'DOB Enterprises';
+    let finalName = studioName.trim();
+    // Non-account players / guests: generate random name if slot was left empty!
+    if (!finalName) {
+      finalName = generateRandomGuestName();
+      setStudioName(finalName);
+    }
     soundManager.playCashChime();
     onEnterGame(finalName);
   };
@@ -298,69 +349,142 @@ export const MainScreen: React.FC<MainScreenProps> = ({
           onSubmit={handleSubmit}
           className="w-full bg-slate-950/90 border border-slate-800 hover:border-cyan-500/50 rounded-2xl p-5 sm:p-6 shadow-2xl backdrop-blur-md space-y-4 transition-all"
         >
-          <div className="text-left space-y-1.5">
+          <div className="text-left space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-mono font-bold text-cyan-400 tracking-wider flex items-center gap-1.5">
                 <Terminal className="w-4 h-4 text-cyan-400" />
-                ENTERPRISE IDENTITY CODENAME
+                <span>PLAYER / STUDIO IDENTITY</span>
               </label>
               <button
                 type="button"
                 onClick={handleRandomize}
-                className="text-[11px] font-mono text-cyan-300 hover:text-white flex items-center gap-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-lg transition-colors cursor-pointer"
-                title="Roll Corporate Presets"
+                className="text-[11px] font-mono text-cyan-300 hover:text-white flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500/50 px-2.5 py-1 rounded-lg transition-colors cursor-pointer shadow-sm"
+                title="Generate Random Guest Name"
               >
-                <Dices className="w-3 h-3" />
-                <span>Preset</span>
+                <Dices className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Roll Random Name</span>
               </button>
             </div>
 
-            {/* Interactive Name Input Slot */}
+            {/* Interactive Name Input Slot - Starts empty, editable, changeable anytime */}
             <div className={`relative rounded-xl transition-all border ${
               inputFocused 
                 ? 'border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.35)] bg-slate-900' 
                 : 'border-slate-800 bg-slate-900/70 hover:border-slate-700'
             }`}>
-              <div className="flex items-center px-3.5 py-3">
+              <div className="flex items-center px-3.5 py-2.5 sm:py-3">
                 <span className="font-mono text-xs font-bold text-cyan-400 mr-2 shrink-0 select-none">
                   sys://&gt;
                 </span>
                 <input
                   type="text"
                   value={studioName}
-                  onChange={(e) => setStudioName(e.target.value)}
+                  onChange={(e) => {
+                    setStudioName(e.target.value);
+                    setAutoFilled(false);
+                  }}
                   onFocus={() => setInputFocused(true)}
                   onBlur={() => setInputFocused(false)}
                   maxLength={28}
-                  placeholder="DOB Enterprises"
-                  className="w-full bg-transparent text-white font-bold text-base sm:text-lg focus:outline-none placeholder:text-slate-600 font-sans tracking-wide"
+                  placeholder="Enter studio or player name (or leave empty for random)..."
+                  className="w-full bg-transparent text-white font-bold text-sm sm:text-base md:text-lg focus:outline-none placeholder:text-slate-600 font-sans tracking-wide"
                 />
-                <div className="shrink-0 pl-2">
-                  <span className="w-2.5 h-4 bg-cyan-400 inline-block animate-pulse"></span>
-                </div>
+
+                {/* Clear button if has text */}
+                {studioName ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStudioName('');
+                      setAutoFilled(false);
+                    }}
+                    className="shrink-0 p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-slate-300 text-xs transition-colors cursor-pointer mr-1"
+                    title="Clear name slot"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+
+                {/* Direct quick roll inside the input slot */}
+                <button
+                  type="button"
+                  onClick={handleRandomize}
+                  className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/40 text-[11px] font-mono font-bold text-cyan-300 hover:text-white transition-all cursor-pointer shadow-sm"
+                  title="Generate a random name for guests/non-accounts"
+                >
+                  <Dices className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="hidden sm:inline">Randomize</span>
+                </button>
               </div>
             </div>
+
+            {/* Dynamic Status / Auto-fill Note */}
+            {currentUser ? (
+              <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] font-mono px-1">
+                <div className="flex items-center gap-1.5 text-cyan-300">
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span>
+                    Auto-filled from <strong>{currentUser.displayName || currentUser.email}</strong> • Changeable anytime
+                  </span>
+                </div>
+                {extractAccountName(currentUser) && studioName !== extractAccountName(currentUser) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const accName = extractAccountName(currentUser);
+                      setStudioName(accName);
+                      setAutoFilled(true);
+                      soundManager.playKeyClick();
+                    }}
+                    className="text-cyan-400 hover:text-cyan-200 underline cursor-pointer text-[10px]"
+                  >
+                    Reset to Account Name
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] font-mono px-1 text-slate-400">
+                <div className="flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <span>
+                    Guest Mode: Empty upon start. Roll a random name or type your own!
+                  </span>
+                </div>
+                <span className="text-cyan-400/80 text-[10px]">Changeable anytime</span>
+              </div>
+            )}
           </div>
 
-          {/* Quick Preset Badges */}
-          <div className="flex flex-wrap gap-1.5 justify-start text-[11px] font-mono">
-            {NAME_PRESETS.slice(0, 4).map((preset) => (
+          {/* Quick Random Ideas / Presets */}
+          <div className="flex flex-wrap items-center gap-1.5 justify-start text-[11px] font-mono">
+            <span className="text-slate-500 text-[10px] uppercase font-bold mr-0.5">Ideas:</span>
+            {randomPresets.map((preset) => (
               <button
                 key={preset}
                 type="button"
                 onClick={() => {
                   soundManager.playKeyClick();
                   setStudioName(preset);
+                  setAutoFilled(false);
                 }}
-                className={`px-2 py-1 rounded-lg border text-xs transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 rounded-lg border text-xs transition-all cursor-pointer ${
                   studioName === preset
-                    ? 'bg-cyan-950/80 border-cyan-500 text-cyan-300'
+                    ? 'bg-cyan-950/90 border-cyan-400 text-cyan-300 font-bold shadow-sm'
                     : 'bg-slate-900/60 border-slate-800/80 text-slate-400 hover:text-slate-200 hover:border-slate-700'
                 }`}
               >
                 {preset}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={handleRerollPresets}
+              className="px-2 py-1 rounded-lg border border-slate-800 hover:border-cyan-500/40 text-slate-400 hover:text-cyan-300 text-[10px] transition-colors cursor-pointer flex items-center gap-1"
+              title="Generate new random name suggestions"
+            >
+              <RefreshCw className="w-2.5 h-2.5" />
+              <span>More</span>
+            </button>
           </div>
 
           {/* Existing Progress Snapshot (if returning player) */}
@@ -388,7 +512,9 @@ export const MainScreen: React.FC<MainScreenProps> = ({
           >
             <Play className="w-5 h-5 fill-current text-white group-hover:translate-x-0.5 transition-transform" />
             <span>
-              {hasExistingProgress ? 'RESUME DOB ENTERPRISE' : 'LAUNCH DOB ENTERPRISE'}
+              {hasExistingProgress 
+                ? (studioName.trim() ? `RESUME ${studioName.toUpperCase()}` : 'RESUME STUDIO') 
+                : (studioName.trim() ? `LAUNCH ${studioName.toUpperCase()}` : 'LAUNCH RANDOM STUDIO')}
             </span>
           </button>
 

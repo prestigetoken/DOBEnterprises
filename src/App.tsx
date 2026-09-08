@@ -60,8 +60,10 @@ import {
   UserAccount,
   isUserAdmin,
   subscribeToAuth,
-  saveGameToCloud
+  saveGameToCloud,
+  updatePlayerStudioName
 } from './firebase';
+import { generateRandomGuestName, extractAccountName } from './utils/nameGenerator';
 
 const STORAGE_KEY = 'DOB_ENTERPRISES_SAVE_V1';
 
@@ -73,8 +75,8 @@ export default function App() {
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
 
-  // Studio Profile
-  const [studioName, setStudioName] = useState<string>('DOB Enterprises');
+  // Studio Profile - starts empty for guest/non-account players upon starting
+  const [studioName, setStudioName] = useState<string>('');
   const [cash, setCash] = useState<number>(0); // Starts at $0 as in original Gameinc.io!
   const [followers, setFollowers] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<'pipeline' | 'talent' | 'lawsuits' | 'leaderboard' | 'upgrades'>('pipeline');
@@ -130,10 +132,11 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('GAMEINC_IO_SAVE_V1');
       if (saved) {
         const data = JSON.parse(saved);
-        if (data.studioName && data.studioName !== 'BitCrafters .io' && data.studioName !== 'Game Inc.') {
+        if (data.studioName && data.studioName !== 'BitCrafters .io' && data.studioName !== 'Game Inc.' && data.studioName !== 'DOB Enterprises') {
           setStudioName(data.studioName);
         } else {
-          setStudioName('DOB Enterprises');
+          // Fresh / guest starting state: empty name slot
+          setStudioName('');
         }
         if (typeof data.cash === 'number') setCash(data.cash);
         if (typeof data.followers === 'number') setFollowers(data.followers);
@@ -172,6 +175,18 @@ export default function App() {
   useEffect(() => {
     const unsub = subscribeToAuth((user) => {
       setCurrentUser(user);
+      if (user) {
+        const autoName = extractAccountName(user);
+        if (autoName) {
+          // Auto-fill if name is currently empty or still default placeholder
+          setStudioName((prev) => {
+            if (!prev || !prev.trim() || prev === 'DOB Enterprises') {
+              return autoName;
+            }
+            return prev;
+          });
+        }
+      }
     });
     return () => unsub();
   }, []);
@@ -879,8 +894,12 @@ export default function App() {
           followers={followers}
           releasedGamesCount={releasedGames.length}
           onEnterGame={(chosenName) => {
-            setStudioName(chosenName);
+            const finalName = chosenName.trim() || generateRandomGuestName();
+            setStudioName(finalName);
             setCurrentScreen('game');
+            if (currentUser?.userId) {
+              updatePlayerStudioName(currentUser.userId, finalName, currentUser.email);
+            }
           }}
           onResetGame={handleRestartChapter11}
           onOpenMultiplayer={() => setIsMultiplayerModalOpen(true)}
@@ -907,6 +926,8 @@ export default function App() {
           isOpen={isAccountModalOpen}
           onClose={() => setIsAccountModalOpen(false)}
           currentUser={currentUser}
+          currentStudioName={studioName}
+          onStudioNameChange={(newName) => setStudioName(newName)}
           currentGameState={getCurrentGameState()}
           onLoadGame={handleApplyCloudSave}
           onOpenAdminConsole={() => {
@@ -931,8 +952,14 @@ export default function App() {
     <div className="min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950 font-sans pb-8">
       {/* Top Header */}
       <Header
-        studioName={studioName}
-        onUpdateStudioName={setStudioName}
+        studioName={studioName || 'My Studio'}
+        onUpdateStudioName={(newName) => {
+          const finalName = newName.trim() || generateRandomGuestName();
+          setStudioName(finalName);
+          if (currentUser?.userId) {
+            updatePlayerStudioName(currentUser.userId, finalName, currentUser.email);
+          }
+        }}
         cash={cash}
         netWorth={netWorth}
         followers={followers}
@@ -1239,6 +1266,8 @@ export default function App() {
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
         currentUser={currentUser}
+        currentStudioName={studioName}
+        onStudioNameChange={(newName) => setStudioName(newName)}
         currentGameState={getCurrentGameState()}
         onLoadGame={handleApplyCloudSave}
         onOpenAdminConsole={() => {

@@ -19,7 +19,8 @@ import {
   HardDrive,
   Zap,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Dices
 } from 'lucide-react';
 import { 
   UserAccount, 
@@ -30,9 +31,11 @@ import {
   loadGameFromCloud,
   isUserAdmin,
   createOrLoginInstantCloudAccount,
-  loginWithGoogle
+  loginWithGoogle,
+  updatePlayerStudioName
 } from '../firebase';
 import { soundManager } from '../utils/audio';
+import { generateRandomGuestName, extractAccountName } from '../utils/nameGenerator';
 
 interface AccountModalProps {
   isOpen: boolean;
@@ -40,6 +43,7 @@ interface AccountModalProps {
   currentUser: UserAccount | null;
   onUserChange?: (user: UserAccount | null) => void;
   currentStudioName?: string;
+  onStudioNameChange?: (name: string) => void;
   currentGameState: any;
   onApplyLoadedGameState?: (loadedState: any) => void;
   onLoadGame?: (loadedState: any) => void;
@@ -51,7 +55,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   onClose,
   currentUser,
   onUserChange,
-  currentStudioName = 'DOB Enterprises',
+  currentStudioName = '',
+  onStudioNameChange,
   currentGameState,
   onApplyLoadedGameState,
   onLoadGame,
@@ -61,8 +66,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [email, setEmail] = useState('daleobeirned@gmail.com');
   const [password, setPassword] = useState('DOB-ADMIN-2026');
   const [confirmPass, setConfirmPass] = useState('');
-  const [studioNameInput, setStudioNameInput] = useState(currentStudioName || 'DOB Enterprises (Admin)');
+  const [studioNameInput, setStudioNameInput] = useState(currentStudioName || '');
   const [adminPasscodeInput, setAdminPasscodeInput] = useState('DOB-ADMIN-2026');
+
+  // Changeable name state (never permanently locked)
+  const [profileNameInput, setProfileNameInput] = useState(currentUser?.studioName || currentStudioName || '');
+  const [isUpdatingName, setIsUpdatingName] = useState(false);
+  const [nameSavedSuccess, setNameSavedSuccess] = useState(false);
   
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -70,7 +80,37 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<string | null>(null);
 
+  // Sync profile name when currentUser changes
+  React.useEffect(() => {
+    if (currentUser?.studioName) {
+      setProfileNameInput(currentUser.studioName);
+    } else if (currentStudioName) {
+      setProfileNameInput(currentStudioName);
+    }
+  }, [currentUser?.studioName, currentStudioName]);
+
   if (!isOpen) return null;
+
+  const handleUpdateStudioName = async () => {
+    const cleanName = profileNameInput.trim() || generateRandomGuestName();
+    setIsUpdatingName(true);
+    try {
+      if (currentUser?.userId) {
+        await updatePlayerStudioName(currentUser.userId, cleanName, currentUser.email);
+      }
+      if (onStudioNameChange) {
+        onStudioNameChange(cleanName);
+      }
+      setProfileNameInput(cleanName);
+      setNameSavedSuccess(true);
+      soundManager.playCashChime();
+      setTimeout(() => setNameSavedSuccess(false), 3000);
+    } catch (err: any) {
+      setErrorMessage('Failed to update name: ' + (err.message || 'Error'));
+    } finally {
+      setIsUpdatingName(false);
+    }
+  };
 
   const handleExecutiveAdminLogin = async () => {
     setIsLoading(true);
@@ -384,6 +424,68 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                     </span>
                   </div>
                 )}
+
+                {/* Changeable Display / Studio Name Section */}
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-mono text-cyan-400 font-bold flex items-center gap-1.5">
+                      <span>Studio / Player Display Name</span>
+                      <span className="text-slate-500 font-normal">(Changeable anytime)</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rand = generateRandomGuestName();
+                        setProfileNameInput(rand);
+                        soundManager.playKeyClick();
+                      }}
+                      className="text-[10px] font-mono text-cyan-300 hover:text-white flex items-center gap-1 cursor-pointer bg-slate-950 px-2 py-0.5 rounded border border-slate-700"
+                    >
+                      <Dices className="w-3 h-3 text-cyan-400" />
+                      <span>Roll Random</span>
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={profileNameInput}
+                      onChange={(e) => setProfileNameInput(e.target.value)}
+                      placeholder="Enter player / studio name..."
+                      maxLength={28}
+                      className="flex-1 bg-slate-950 border border-slate-700 focus:border-cyan-400 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none font-bold font-sans"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleUpdateStudioName}
+                      disabled={isUpdatingName || !profileNameInput.trim()}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs flex items-center gap-1 cursor-pointer transition-all shadow-sm disabled:opacity-50"
+                    >
+                      {nameSavedSuccess ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                          <span>Saved!</span>
+                        </>
+                      ) : (
+                        <span>Update</span>
+                      )}
+                    </button>
+                  </div>
+                  {extractAccountName(currentUser) && profileNameInput !== extractAccountName(currentUser) && (
+                    <div className="text-right">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const accName = extractAccountName(currentUser);
+                          setProfileNameInput(accName);
+                          soundManager.playKeyClick();
+                        }}
+                        className="text-[10px] text-cyan-400 hover:text-cyan-200 underline cursor-pointer"
+                      >
+                        Reset to Google/Email Name ({extractAccountName(currentUser)})
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Cloud Save / Restore Actions */}
@@ -610,20 +712,37 @@ export const AccountModal: React.FC<AccountModalProps> = ({
 
               {(authMode === 'register' || authMode === 'instant') && (
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    Studio Display Name
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-300">
+                      Studio / Player Display Name
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const r = generateRandomGuestName();
+                        setStudioNameInput(r);
+                        soundManager.playKeyClick();
+                      }}
+                      className="text-[10px] font-mono text-cyan-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                    >
+                      <Dices className="w-3 h-3 text-cyan-400" />
+                      <span>Roll Random</span>
+                    </button>
+                  </div>
                   <div className="relative">
                     <Building className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={studioNameInput}
                       onChange={(e) => setStudioNameInput(e.target.value)}
-                      placeholder="e.g. Acme Interactive"
+                      placeholder="Enter display name (or roll random)..."
                       maxLength={50}
                       className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:outline-none text-xs text-white"
                     />
                   </div>
+                  <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                    Player names are changeable at any time; never permanent.
+                  </p>
                 </div>
               )}
 

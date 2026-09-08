@@ -483,6 +483,7 @@ export interface UserAccount {
   userId: string;
   uid?: string;
   email: string;
+  displayName?: string;
   studioName: string;
   role: 'admin' | 'player';
   isBanned?: boolean;
@@ -601,11 +602,14 @@ export function subscribeToAuth(callback: (user: UserAccount | null) => void): U
         activeCustomAccount = userObj;
         callback(userObj);
       } else if (!fbUser.isAnonymous) {
+        const email = fbUser.email || '';
+        const googleName = fbUser.displayName || (email.includes('@') ? email.split('@')[0] : 'Player');
         const acc: UserAccount = {
           userId: fbUser.uid,
           uid: fbUser.uid,
-          email: fbUser.email || '',
-          studioName: fbUser.displayName || 'DOB Enterprises',
+          email,
+          displayName: fbUser.displayName || undefined,
+          studioName: googleName,
           role: isUserAdmin(fbUser.email) ? 'admin' : 'player',
           isBanned: false,
           isAnonymous: false,
@@ -762,16 +766,21 @@ export async function loginWithGoogle(initialSaveData?: any, fallbackEmail?: str
   let account: UserAccount;
   if (snap.exists()) {
     account = snap.data() as UserAccount;
+    if (fbUser.displayName && !account.displayName) {
+      account.displayName = fbUser.displayName;
+    }
     if (isUserAdmin(email) && account.role !== 'admin') {
       account.role = 'admin';
       await updateDoc(userRef, { role: 'admin' });
     }
   } else {
+    const googleName = fbUser.displayName || (email.includes('@') ? email.split('@')[0] : 'Player');
     account = {
       userId: uid,
       uid,
       email,
-      studioName: fbUser.displayName || 'DOB Enterprises',
+      displayName: fbUser.displayName || undefined,
+      studioName: googleName,
       role,
       isBanned: false,
       isAnonymous: false,
@@ -1208,6 +1217,44 @@ export function subscribeToUserProfile(userId: string, callback: (account: UserA
   });
 }
 
+// Update player / studio name dynamically (never permanently locked - changeable at any time)
+export async function updatePlayerStudioName(
+  userId: string,
+  newStudioName: string,
+  email?: string
+): Promise<void> {
+  const cleanName = newStudioName.trim() || 'Studio';
+  try {
+    const userRef = doc(db, 'users', userId);
+    await setDoc(userRef, { studioName: cleanName, updatedAt: Date.now() }, { merge: true }).catch(() => {});
+
+    // Update in accounts collection if email provided or in activeCustomAccount
+    const targetEmail = email || activeCustomAccount?.email;
+    if (targetEmail) {
+      const cleanEmail = targetEmail.trim().toLowerCase();
+      const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+      const accRef = doc(db, 'accounts', accountDocId);
+      await setDoc(accRef, { studioName: cleanName, updatedAt: Date.now() }, { merge: true }).catch(() => {});
+    }
+
+    // Update in lobby studios collection
+    const studioRef = doc(db, 'studios', userId);
+    await setDoc(studioRef, { name: cleanName, lastActive: Date.now() }, { merge: true }).catch(() => {});
+
+    // Update local session & notify listeners
+    if (activeCustomAccount) {
+      activeCustomAccount = {
+        ...activeCustomAccount,
+        studioName: cleanName,
+        updatedAt: Date.now()
+      };
+      notifyAuthChanged(activeCustomAccount);
+    }
+  } catch (err) {
+    console.error('Failed to update studio name:', err);
+  }
+}
+
 // ==========================================
 // IN-GAME FRIEND REQUESTS & FRIENDS LIST
 // ==========================================
@@ -1434,6 +1481,37 @@ export async function adminFetchAllPlayers(): Promise<AdminPlayerRecord[]> {
 
       map.set(uData.userId, existing);
     });
+
+    // 3. Fetch from accounts collection to guarantee all registered player accounts appear
+    const accsRef = collection(db, 'accounts');
+    const aSnap = await getDocs(accsRef).catch(() => null);
+    if (aSnap) {
+      aSnap.forEach((d) => {
+        const aData = d.data() as any;
+        const id = aData.userId || aData.uid || d.id;
+        if (!map.has(id)) {
+          map.set(id, {
+            id,
+            studioName: aData.studioName || 'Studio',
+            email: aData.email,
+            role: aData.role,
+            cash: aData.cash || 5000,
+            netWorth: aData.netWorth || 5000,
+            followers: aData.followers || 0,
+            gamesCount: aData.gamesCount || 0,
+            isBanned: !!aData.isBanned,
+            banReason: aData.banReason,
+            lastActive: aData.updatedAt || aData.createdAt
+          });
+        } else {
+          const item = map.get(id)!;
+          if (aData.email && !item.email) item.email = aData.email;
+          if (aData.role && !item.role) item.role = aData.role;
+          if (aData.isBanned) item.isBanned = true;
+          if (aData.banReason) item.banReason = aData.banReason;
+        }
+      });
+    }
   } catch (err) {
     console.error('Error fetching admin player records:', err);
   }
@@ -1564,4 +1642,115 @@ export async function adminBroadcastAnnouncement(text: string) {
     'announcement'
   );
 }
+
+// Admin: Erase a single player and their entire player account
+export async function adminDeletePlayer(playerId: string, playerEmail?: string, studioName?: string) {
+  try {
+    // 1. Delete from studios collection
+    const studioRef = doc(db, 'studios', playerId);
+    await deleteDoc(studioRef).catch(() => {});
+
+    // 2. Delete from users collection
+    const userRef = doc(db, 'users', playerId);
+    await deleteDoc(userRef).catch(() => {});
+
+    // 3. Delete from accounts collection by computed accountDocId
+    if (playerEmail) {
+      const cleanEmail = playerEmail.trim().toLowerCase();
+      const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+      await deleteDoc(doc(db, 'accounts', accountDocId)).catch(() => {});
+    }
+
+    // 4. Also scan accounts collection for any matching record by userId or email
+    const accsRef = collection(db, 'accounts');
+    const aSnap = await getDocs(accsRef).catch(() => null);
+    if (aSnap) {
+      for (const aDoc of aSnap.docs) {
+        const data = aDoc.data();
+        if (
+          data.userId === playerId ||
+          data.uid === playerId ||
+          (playerEmail && data.email?.toLowerCase() === playerEmail.toLowerCase())
+        ) {
+          await deleteDoc(aDoc.ref).catch(() => {});
+        }
+      }
+    }
+
+    // Broadcast system log to chat
+    await sendGlobalChatMessage(
+      'admin_console',
+      'ADMIN SYSTEM',
+      `🗑️ ACCOUNT PURGED: Player account "${studioName || playerId}" (${playerEmail || 'player'}) was permanently erased by Executive Administration.`,
+      'announcement'
+    ).catch(() => {});
+  } catch (err) {
+    console.error('Admin delete player failed:', err);
+    throw err;
+  }
+}
+
+// Admin: Erase all player accounts (except the master executive administrator)
+export async function adminDeleteAllPlayers(adminEmailToKeep: string = MASTER_ADMIN_EMAIL): Promise<{ deletedCount: number }> {
+  let count = 0;
+  try {
+    const keepEmail = adminEmailToKeep.trim().toLowerCase();
+
+    // 1. Delete all non-admin studios
+    const studiosRef = collection(db, 'studios');
+    const sSnap = await getDocs(studiosRef);
+    for (const d of sSnap.docs) {
+      const data = d.data() as OnlineStudio;
+      if (data.studioId !== 'admin_dale') {
+        await deleteDoc(d.ref).catch(() => {});
+        count++;
+      }
+    }
+
+    // 2. Delete all non-admin users
+    const usersRef = collection(db, 'users');
+    const uSnap = await getDocs(usersRef);
+    for (const d of uSnap.docs) {
+      const data = d.data() as UserAccount;
+      if (
+        data.email?.toLowerCase() !== keepEmail &&
+        data.role !== 'admin' &&
+        d.id !== 'admin_dale'
+      ) {
+        await deleteDoc(d.ref).catch(() => {});
+        count++;
+      }
+    }
+
+    // 3. Delete all non-admin accounts
+    const accsRef = collection(db, 'accounts');
+    const aSnap = await getDocs(accsRef).catch(() => null);
+    if (aSnap) {
+      for (const d of aSnap.docs) {
+        const data = d.data();
+        if (
+          data.email?.toLowerCase() !== keepEmail &&
+          data.role !== 'admin'
+        ) {
+          await deleteDoc(d.ref).catch(() => {});
+          count++;
+        }
+      }
+    }
+
+    // Broadcast announcement
+    await sendGlobalChatMessage(
+      'admin_console',
+      'ADMIN SYSTEM',
+      `🚨 DATABASE PURGE: All player accounts have been permanently wiped by Executive Administration (${count} records purged).`,
+      'announcement'
+    ).catch(() => {});
+
+    return { deletedCount: count };
+  } catch (err) {
+    console.error('Admin delete all players failed:', err);
+    throw err;
+  }
+}
+
 

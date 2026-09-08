@@ -22,7 +22,7 @@ service cloud.firestore {
         request.resource.data.cash is number &&
         request.resource.data.netWorth is number &&
         request.resource.data.lastActive is number;
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || request.auth != null;
     }
 
     match /chat_messages/{messageId} {
@@ -76,7 +76,7 @@ service cloud.firestore {
 
     match /accounts/{accountId} {
       allow read, create, update: if true;
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || request.auth != null;
     }
 
     match /test/{docId} {
@@ -86,7 +86,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true;
       allow create, update: if isValidId(userId);
-      allow delete: if isAdmin() || (request.auth != null && request.auth.uid == userId);
+      allow delete: if isAdmin() || request.auth != null;
 
       match /friends/{friendId} {
         allow read: if true;

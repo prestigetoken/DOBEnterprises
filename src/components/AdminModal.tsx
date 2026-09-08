@@ -17,7 +17,8 @@ import {
   Award,
   Gamepad2,
   Lock,
-  Unlock
+  Unlock,
+  Trash2
 } from 'lucide-react';
 import { 
   adminFetchAllPlayers, 
@@ -25,6 +26,8 @@ import {
   adminSetPlayerBan, 
   adminResetLeaderboard, 
   adminBroadcastAnnouncement,
+  adminDeletePlayer,
+  adminDeleteAllPlayers,
   AdminPlayerRecord
 } from '../firebase';
 import { soundManager } from '../utils/audio';
@@ -61,6 +64,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   // Ban management
   const [banReasonInput, setBanReasonInput] = useState('Terms of Service & Code of Conduct violation');
+
+  // Player deletion state
+  const [playerToErase, setPlayerToErase] = useState<AdminPlayerRecord | null>(null);
+  const [isConfirmingEraseAll, setIsConfirmingEraseAll] = useState(false);
+  const [eraseAllConfirmationText, setEraseAllConfirmationText] = useState('');
 
   // Global broadcast
   const [broadcastText, setBroadcastText] = useState('');
@@ -171,6 +179,49 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     }
   };
 
+  const handleDeletePlayer = async (player: AdminPlayerRecord) => {
+    setIsLoading(true);
+    setStatusMessage(null);
+    try {
+      await adminDeletePlayer(player.id, player.email, player.studioName);
+      soundManager.playGavel();
+      setStatusMessage({
+        type: 'success',
+        text: `Permanently erased player account "${player.studioName}" (${player.email || player.id})!`
+      });
+      setPlayerToErase(null);
+      await loadPlayers();
+      if (onRefreshLeaderboard) onRefreshLeaderboard();
+    } catch (err: any) {
+      soundManager.playError();
+      setStatusMessage({ type: 'error', text: 'Failed to erase player: ' + err.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteAllPlayers = async () => {
+    setIsLoading(true);
+    setStatusMessage(null);
+    try {
+      const result = await adminDeleteAllPlayers(currentAdminEmail || 'daleobeirned@gmail.com');
+      soundManager.playGavel();
+      setStatusMessage({
+        type: 'success',
+        text: `Successfully wiped all players from player accounts! Cleared ${result.deletedCount} records.`
+      });
+      setIsConfirmingEraseAll(false);
+      setEraseAllConfirmationText('');
+      await loadPlayers();
+      if (onRefreshLeaderboard) onRefreshLeaderboard();
+    } catch (err: any) {
+      soundManager.playError();
+      setStatusMessage({ type: 'error', text: 'Failed to erase all players: ' + err.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSendBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!broadcastText.trim()) return;
@@ -256,7 +307,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             }`}
           >
             <RotateCcw className="w-4 h-4" />
-            <span>LEADERBOARD RESET</span>
+            <span>DATABASE & RESET</span>
           </button>
 
           <button
@@ -313,15 +364,124 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   />
                 </div>
 
-                <button
-                  onClick={loadPlayers}
-                  disabled={isLoading}
-                  className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs text-slate-300 font-bold flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                  <span>Refresh Registry</span>
-                </button>
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    onClick={() => {
+                      setIsConfirmingEraseAll(true);
+                      setEraseAllConfirmationText('');
+                    }}
+                    disabled={isLoading || players.length === 0}
+                    className="px-3 py-2 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-700/80 text-xs text-red-200 font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-md shadow-red-950/40 disabled:opacity-50"
+                    title="Permanently erase all player accounts from database"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                    <span>Erase All Players</span>
+                  </button>
+
+                  <button
+                    onClick={loadPlayers}
+                    disabled={isLoading}
+                    className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs text-slate-300 font-bold flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    <span>Refresh Registry</span>
+                  </button>
+                </div>
               </div>
+
+              {/* Erase Single Player Confirmation Modal / Banner */}
+              {playerToErase && (
+                <div className="p-4 rounded-xl bg-red-950/95 border-2 border-red-500 shadow-2xl space-y-3 animate-in fade-in">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2 text-sm font-bold text-red-200">
+                      <Trash2 className="w-5 h-5 text-red-400 shrink-0" />
+                      <span>Permanently Erase Player Account: {playerToErase.studioName}</span>
+                    </div>
+                    <button
+                      onClick={() => setPlayerToErase(null)}
+                      className="text-slate-400 hover:text-white text-xs cursor-pointer p-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed bg-black/40 p-3 rounded-lg border border-red-800/40">
+                    This will permanently erase this player's studio profile, user credentials ({playerToErase.email || 'Guest ID: ' + playerToErase.id}), saved data, and leaderboard ranking across all database collections.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={() => handleDeletePlayer(playerToErase)}
+                      disabled={isLoading}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{isLoading ? 'Erasing Account...' : 'YES, PERMANENTLY ERASE THIS PLAYER'}</span>
+                    </button>
+                    <button
+                      onClick={() => setPlayerToErase(null)}
+                      disabled={isLoading}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Erase All Players Confirmation Drawer */}
+              {isConfirmingEraseAll && (
+                <div className="p-5 rounded-2xl bg-gradient-to-b from-red-950 to-slate-950 border-2 border-red-500 shadow-2xl space-y-3.5 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5 text-red-300 font-bold text-sm">
+                      <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+                      <span>MASS PURGE: ERASE ALL PLAYERS FROM PLAYER ACCOUNTS</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsConfirmingEraseAll(false);
+                        setEraseAllConfirmationText('');
+                      }}
+                      className="text-slate-400 hover:text-white p-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-red-200/90 leading-relaxed bg-black/50 p-3 rounded-xl border border-red-900/50">
+                    This will wipe all player accounts across the <code>studios</code>, <code>users</code>, and <code>accounts</code> database collections (excluding the Executive Super-Administrator account <code>{currentAdminEmail || 'daleobeirned@gmail.com'}</code>). All active players will be cleared.
+                  </p>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-mono text-slate-300">
+                      Type <span className="text-red-400 font-bold">ERASE ALL PLAYERS</span> to unlock deletion:
+                    </label>
+                    <input
+                      type="text"
+                      value={eraseAllConfirmationText}
+                      onChange={(e) => setEraseAllConfirmationText(e.target.value)}
+                      placeholder="ERASE ALL PLAYERS"
+                      className="w-full max-w-sm px-3 py-2 rounded-lg bg-slate-950 border border-red-500/60 focus:border-red-400 focus:outline-none text-xs text-white font-mono"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={handleDeleteAllPlayers}
+                      disabled={isLoading || eraseAllConfirmationText.trim() !== 'ERASE ALL PLAYERS'}
+                      className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-950/80 flex items-center gap-2 cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>{isLoading ? 'Purging Player Accounts...' : 'CONFIRM PURGE: ERASE ALL PLAYERS'}</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsConfirmingEraseAll(false);
+                        setEraseAllConfirmationText('');
+                      }}
+                      disabled={isLoading}
+                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Value Modifier Drawer if player selected */}
               {selectedPlayer && (
@@ -521,6 +681,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                   </>
                                 )}
                               </button>
+
+                              {player.role !== 'admin' && player.email?.toLowerCase() !== (currentAdminEmail || 'daleobeirned@gmail.com').toLowerCase() && player.id !== 'admin_dale' && (
+                                <button
+                                  onClick={() => setPlayerToErase(player)}
+                                  className="px-2 py-1 rounded bg-red-950/90 hover:bg-red-900 border border-red-700/80 text-red-300 text-xs font-bold flex items-center gap-1 cursor-pointer transition-all shadow-sm"
+                                  title="Permanently Erase Player Account"
+                                >
+                                  <Trash2 className="w-3 h-3 text-red-400" />
+                                  <span>Erase</span>
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -534,6 +705,79 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
           {activeTab === 'leaderboard' && (
             <div className="max-w-2xl mx-auto space-y-6 py-4">
+              {/* Erase All Players & Player Accounts Card */}
+              <div className="p-5 rounded-2xl bg-gradient-to-b from-red-950/70 to-slate-900 border-2 border-red-500/60 shadow-xl space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/50 flex items-center justify-center text-red-400 shrink-0">
+                    <Trash2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <span>Erase All Players & Accounts</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/20 text-red-300 border border-red-500/40">
+                        DESTRUCTIVE ACTION
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Permanently wipes all player studios, cloud saves, and player login accounts from Firebase.
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+                  This action removes all non-administrator records across the <code>studios</code>, <code>users</code>, and <code>accounts</code> database collections in Firestore. The Executive Super-Administrator account (<strong>{currentAdminEmail || 'daleobeirned@gmail.com'}</strong>) will remain protected.
+                </p>
+
+                {isConfirmingEraseAll ? (
+                  <div className="p-4 rounded-xl bg-red-950/95 border-2 border-red-500 space-y-3.5 animate-in fade-in">
+                    <div className="flex items-center gap-2 text-xs font-bold text-red-200">
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                      <span>TYPE "ERASE ALL PLAYERS" TO CONFIRM GLOBAL PURGE:</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={eraseAllConfirmationText}
+                      onChange={(e) => setEraseAllConfirmationText(e.target.value)}
+                      placeholder="ERASE ALL PLAYERS"
+                      className="w-full max-w-sm px-3 py-2 rounded-lg bg-slate-950 border border-red-500/60 focus:border-red-400 focus:outline-none text-xs text-white font-mono"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleDeleteAllPlayers}
+                        disabled={isLoading || eraseAllConfirmationText.trim() !== 'ERASE ALL PLAYERS'}
+                        className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{isLoading ? 'Purging All Players...' : 'YES, PERMANENTLY ERASE ALL PLAYERS'}</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsConfirmingEraseAll(false);
+                          setEraseAllConfirmationText('');
+                        }}
+                        disabled={isLoading}
+                        className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition-all"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setIsConfirmingEraseAll(true);
+                      setEraseAllConfirmationText('');
+                    }}
+                    disabled={isLoading}
+                    className="py-3 px-5 rounded-xl font-bold text-xs tracking-wider uppercase text-white bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 shadow-lg shadow-red-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>ERASE ALL PLAYERS FROM PLAYER ACCOUNTS</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Leaderboard Reset Card */}
               <div className="p-5 rounded-2xl bg-slate-900/80 border border-red-500/40 space-y-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400">
