@@ -1,0 +1,240 @@
+{
+  "entities": {
+    "Studio": {
+      "title": "Studio",
+      "description": "Public studio profile and real-time multiplayer telemetry",
+      "type": "object",
+      "properties": {
+        "studioId": {
+          "type": "string",
+          "description": "Unique client studio identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the game studio",
+          "maxLength": 50
+        },
+        "cash": {
+          "type": "number",
+          "description": "Current studio liquidity in USD"
+        },
+        "netWorth": {
+          "type": "number",
+          "description": "Total studio valuation and net worth"
+        },
+        "followers": {
+          "type": "number",
+          "description": "Number of studio fans and followers"
+        },
+        "gamesCount": {
+          "type": "number",
+          "description": "Number of released game titles"
+        },
+        "lastActive": {
+          "type": "number",
+          "description": "Unix timestamp of the last player heartbeat"
+        },
+        "isOnline": {
+          "type": "boolean",
+          "description": "Online presence flag"
+        }
+      },
+      "required": ["studioId", "name", "cash", "netWorth", "lastActive"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Live global lobby ticker and chat message",
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Unique message identifier"
+        },
+        "studioId": {
+          "type": "string",
+          "description": "Author studio identifier"
+        },
+        "studioName": {
+          "type": "string",
+          "description": "Author studio display name",
+          "maxLength": 50
+        },
+        "text": {
+          "type": "string",
+          "description": "Body of the chat or broadcast message",
+          "maxLength": 280
+        },
+        "type": {
+          "type": "string",
+          "description": "Classification of ticker message",
+          "enum": ["chat", "announcement", "lawsuit", "release"]
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Unix timestamp of creation"
+        }
+      },
+      "required": ["messageId", "studioId", "studioName", "text", "type", "timestamp"]
+    },
+    "PvPLawsuit": {
+      "title": "PvPLawsuit",
+      "description": "Player-versus-player lawsuit served across real studios",
+      "type": "object",
+      "properties": {
+        "lawsuitId": {
+          "type": "string",
+          "description": "Unique lawsuit identifier"
+        },
+        "plaintiffId": {
+          "type": "string",
+          "description": "Studio filing the lawsuit"
+        },
+        "plaintiffName": {
+          "type": "string",
+          "description": "Name of plaintiff studio",
+          "maxLength": 50
+        },
+        "defendantId": {
+          "type": "string",
+          "description": "Studio targeted by the lawsuit"
+        },
+        "defendantName": {
+          "type": "string",
+          "description": "Name of defendant studio",
+          "maxLength": 50
+        },
+        "gameTitle": {
+          "type": "string",
+          "description": "Infringed game title subject",
+          "maxLength": 60
+        },
+        "claimAmount": {
+          "type": "number",
+          "description": "Damages claimed in USD"
+        },
+        "status": {
+          "type": "string",
+          "description": "Current status of the lawsuit",
+          "enum": ["pending", "settled", "dismissed", "countersued"]
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Unix timestamp when lawsuit was served"
+        }
+      },
+      "required": ["lawsuitId", "plaintiffId", "plaintiffName", "defendantId", "defendantName", "gameTitle", "claimAmount", "status", "createdAt"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Private lobby room for head-to-head sprint challenges with friends",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "description": "Alphanumeric room invite code"
+        },
+        "hostId": {
+          "type": "string",
+          "description": "Studio ID of the room creator"
+        },
+        "hostName": {
+          "type": "string",
+          "description": "Studio name of the host",
+          "maxLength": 50
+        },
+        "title": {
+          "type": "string",
+          "description": "Custom title or challenge label",
+          "maxLength": 60
+        },
+        "targetGoal": {
+          "type": "string",
+          "description": "Victory condition of the race",
+          "enum": ["first_million", "five_games", "first_ten_million"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Current match status",
+          "enum": ["waiting", "in_progress", "completed"]
+        },
+        "winnerId": {
+          "type": "string",
+          "description": "Studio ID of the champion if completed"
+        },
+        "winnerName": {
+          "type": "string",
+          "description": "Studio name of the champion",
+          "maxLength": 50
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Unix timestamp of room creation"
+        }
+      },
+      "required": ["roomId", "hostId", "hostName", "title", "targetGoal", "status", "createdAt"]
+    },
+    "RoomMember": {
+      "title": "RoomMember",
+      "description": "Player participating in a private challenge room",
+      "type": "object",
+      "properties": {
+        "memberId": {
+          "type": "string",
+          "description": "Studio ID of participant"
+        },
+        "studioName": {
+          "type": "string",
+          "description": "Participant display name",
+          "maxLength": 50
+        },
+        "cash": {
+          "type": "number",
+          "description": "Live liquidity in challenge"
+        },
+        "netWorth": {
+          "type": "number",
+          "description": "Live net worth"
+        },
+        "gamesCount": {
+          "type": "number",
+          "description": "Live published games count"
+        },
+        "isReady": {
+          "type": "boolean",
+          "description": "Ready confirmation status"
+        },
+        "progress": {
+          "type": "number",
+          "description": "Percentage progress towards goal (0 to 100)"
+        },
+        "lastPing": {
+          "type": "number",
+          "description": "Heartbeat timestamp"
+        }
+      },
+      "required": ["memberId", "studioName", "cash", "netWorth", "gamesCount", "isReady", "progress", "lastPing"]
+    }
+  },
+  "firestore": {
+    "/studios/{studioId}": {
+      "schema": "Studio",
+      "description": "Public studio records for live global leaderboard and PvP matchmaking"
+    },
+    "/chat_messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Live global lobby ticker and chat messages broadcast across online studios"
+    },
+    "/lawsuits/{lawsuitId}": {
+      "schema": "PvPLawsuit",
+      "description": "Interactive PvP lawsuits served between real online studios"
+    },
+    "/rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Private friend challenge rooms"
+    },
+    "/rooms/{roomId}/members/{memberId}": {
+      "schema": "RoomMember",
+      "description": "Participants in a private challenge room"
+    }
+  }
+}

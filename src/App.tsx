@@ -50,12 +50,15 @@ import { LiveChatTicker } from './components/LiveChatTicker';
 import { NewGameModal } from './components/NewGameModal';
 import { GameOverModal } from './components/GameOverModal';
 import { MainScreen } from './components/MainScreen';
+import { MultiplayerModal } from './components/MultiplayerModal';
+import { getOrCreatePlayerId, syncStudioToLobby, sendGlobalChatMessage } from './firebase';
 
 const STORAGE_KEY = 'DOB_ENTERPRISES_SAVE_V1';
 
 export default function App() {
   // Navigation / Screen state
   const [currentScreen, setCurrentScreen] = useState<'main' | 'game'>('main');
+  const [isMultiplayerModalOpen, setIsMultiplayerModalOpen] = useState<boolean>(false);
 
   // Studio Profile
   const [studioName, setStudioName] = useState<string>('DOB Enterprises');
@@ -339,6 +342,32 @@ export default function App() {
     return () => clearInterval(interval);
   }, [netWorth, cash, competitors, activeLawsuits, studioName]);
 
+  // Periodic Firebase multiplayer heartbeat & studio sync
+  useEffect(() => {
+    const playerId = getOrCreatePlayerId();
+    syncStudioToLobby(
+      playerId,
+      studioName,
+      cash,
+      netWorth,
+      followers,
+      releasedGames.length
+    );
+
+    const interval = setInterval(() => {
+      syncStudioToLobby(
+        playerId,
+        studioName,
+        cash,
+        netWorth,
+        followers,
+        releasedGames.length
+      );
+    }, 12000);
+
+    return () => clearInterval(interval);
+  }, [studioName, cash, netWorth, followers, releasedGames.length]);
+
   // Keystroke typing handler
   const handleKeystrokeEarn = useCallback((cashAmount: number, locAmount: number) => {
     setCash((prev) => prev + cashAmount);
@@ -466,6 +495,14 @@ export default function App() {
         type: 'release'
       }
     ]);
+
+    // Broadcast to Firebase global ticker
+    sendGlobalChatMessage(
+      getOrCreatePlayerId(),
+      studioName,
+      `🚀 RELEASED "${published.title}"! Scored ${reviewScore}/10 and generated $${initialSales.toLocaleString()}!`,
+      'release'
+    );
   };
 
   // Push patch to released game
@@ -773,18 +810,32 @@ export default function App() {
 
   if (currentScreen === 'main') {
     return (
-      <MainScreen
-        currentStudioName={studioName}
-        cash={cash}
-        netWorth={netWorth}
-        followers={followers}
-        releasedGamesCount={releasedGames.length}
-        onEnterGame={(chosenName) => {
-          setStudioName(chosenName);
-          setCurrentScreen('game');
-        }}
-        onResetGame={handleRestartChapter11}
-      />
+      <>
+        <MainScreen
+          currentStudioName={studioName}
+          cash={cash}
+          netWorth={netWorth}
+          followers={followers}
+          releasedGamesCount={releasedGames.length}
+          onEnterGame={(chosenName) => {
+            setStudioName(chosenName);
+            setCurrentScreen('game');
+          }}
+          onResetGame={handleRestartChapter11}
+          onOpenMultiplayer={() => setIsMultiplayerModalOpen(true)}
+        />
+        <MultiplayerModal
+          isOpen={isMultiplayerModalOpen}
+          onClose={() => setIsMultiplayerModalOpen(false)}
+          myStudioName={studioName}
+          cash={cash}
+          netWorth={netWorth}
+          followers={followers}
+          releasedGamesCount={releasedGames.length}
+          onDeductCash={(amount) => setCash((prev) => Math.max(0, prev - amount))}
+          onAddCash={(amount) => setCash((prev) => prev + amount)}
+        />
+      </>
     );
   }
 
@@ -805,6 +856,7 @@ export default function App() {
         onOpenOfficeUpgrades={() => setActiveTab('upgrades')}
         onResetGame={handleResetGame}
         onOpenMainScreen={() => setCurrentScreen('main')}
+        onOpenMultiplayer={() => setIsMultiplayerModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -1072,6 +1124,19 @@ export default function App() {
         onAcceptAngelBailout={handleAcceptAngelBailout}
         onLiquidateStaff={handleLiquidateStaff}
         onRestartChapter11={handleRestartChapter11}
+      />
+
+      {/* Global & Friends Private Multiplayer Hub Modal */}
+      <MultiplayerModal
+        isOpen={isMultiplayerModalOpen}
+        onClose={() => setIsMultiplayerModalOpen(false)}
+        myStudioName={studioName}
+        cash={cash}
+        netWorth={netWorth}
+        followers={followers}
+        releasedGamesCount={releasedGames.length}
+        onDeductCash={(amount) => setCash((prev) => Math.max(0, prev - amount))}
+        onAddCash={(amount) => setCash((prev) => prev + amount)}
       />
     </div>
   );

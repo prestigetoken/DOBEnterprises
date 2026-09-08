@@ -25,6 +25,7 @@ interface MainScreenProps {
   releasedGamesCount: number;
   onEnterGame: (chosenName: string) => void;
   onResetGame: () => void;
+  onOpenMultiplayer?: () => void;
 }
 
 const NAME_PRESETS = [
@@ -43,7 +44,8 @@ export const MainScreen: React.FC<MainScreenProps> = ({
   followers,
   releasedGamesCount,
   onEnterGame,
-  onResetGame
+  onResetGame,
+  onOpenMultiplayer
 }) => {
   const [studioName, setStudioName] = useState(currentStudioName || 'DOB Enterprises');
   const [soundEnabled, setSoundEnabled] = useState(soundManager.enabled);
@@ -357,6 +359,18 @@ export const MainScreen: React.FC<MainScreenProps> = ({
               {hasExistingProgress ? 'RESUME DOB ENTERPRISE' : 'LAUNCH DOB ENTERPRISE'}
             </span>
           </button>
+
+          {/* Multiplayer Hub Button */}
+          {onOpenMultiplayer && (
+            <button
+              type="button"
+              onClick={onOpenMultiplayer}
+              className="w-full py-3 px-4 rounded-xl font-bold text-xs sm:text-sm tracking-wider uppercase text-cyan-300 bg-slate-900/90 hover:bg-slate-800 border border-cyan-500/50 hover:border-cyan-400 shadow-lg shadow-cyan-950/50 flex items-center justify-center gap-2 cursor-pointer transition-all"
+            >
+              <Globe className="w-4 h-4 text-cyan-400 animate-pulse" />
+              <span>MULTIPLAYER HUB (GLOBAL & FRIENDS)</span>
+            </button>
+          )}
 
           {/* Reset progress option if existing save */}
           {hasExistingProgress && (

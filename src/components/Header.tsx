@@ -11,7 +11,8 @@ import {
   Edit3, 
   Check, 
   AlertTriangle,
-  Building
+  Building,
+  Globe
 } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
@@ -29,6 +30,7 @@ interface HeaderProps {
   onOpenOfficeUpgrades: () => void;
   onResetGame: () => void;
   onOpenMainScreen?: () => void;
+  onOpenMultiplayer?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -44,7 +46,8 @@ export const Header: React.FC<HeaderProps> = ({
   hiredCount,
   onOpenOfficeUpgrades,
   onResetGame,
-  onOpenMainScreen
+  onOpenMainScreen,
+  onOpenMultiplayer
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(studioName);
@@ -234,6 +237,17 @@ export const Header: React.FC<HeaderProps> = ({
           >
             {soundOn ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-slate-500" />}
           </button>
+
+          {onOpenMultiplayer && (
+            <button
+              onClick={onOpenMultiplayer}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-cyan-950/90 to-indigo-950/90 hover:from-cyan-900 hover:to-indigo-900 border border-cyan-500/60 text-xs text-cyan-300 font-bold transition-all shadow-md shadow-cyan-950/50 cursor-pointer animate-pulse hover:animate-none"
+              title="Open Real-time Global & Friends Multiplayer Hub"
+            >
+              <Globe className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Multiplayer</span>
+            </button>
+          )}
 
           {onOpenMainScreen && (
             <button
