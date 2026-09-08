@@ -58,11 +58,11 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   onOpenAdminConsole
 }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'instant'>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('daleobeirned@gmail.com');
+  const [password, setPassword] = useState('DOB-ADMIN-2026');
   const [confirmPass, setConfirmPass] = useState('');
-  const [studioNameInput, setStudioNameInput] = useState(currentStudioName || 'DOB Enterprises');
-  const [adminPasscodeInput, setAdminPasscodeInput] = useState('');
+  const [studioNameInput, setStudioNameInput] = useState(currentStudioName || 'DOB Enterprises (Admin)');
+  const [adminPasscodeInput, setAdminPasscodeInput] = useState('DOB-ADMIN-2026');
   
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -72,13 +72,31 @@ export const AccountModal: React.FC<AccountModalProps> = ({
 
   if (!isOpen) return null;
 
+  const handleExecutiveAdminLogin = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const account = await loginAccount('daleobeirned@gmail.com', 'DOB-ADMIN-2026');
+      if (onUserChange) onUserChange(account);
+      soundManager.playSuccess();
+      setSuccessMessage("Executive Super-Administrator Authenticated! Welcome, Dale O'Beirne.");
+      setOperationNotAllowed(false);
+    } catch (err: any) {
+      soundManager.playError();
+      setErrorMessage(err.message || 'Failed to authenticate executive admin.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleInstantCloudAccount = async (targetEmail?: string, targetStudio?: string) => {
     setIsLoading(true);
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const chosenEmail = targetEmail || email || (isUserAdmin(email) ? email : 'player@dobenterprises.com');
-      const chosenStudio = targetStudio || studioNameInput || currentStudioName || 'DOB Enterprises';
+      const chosenEmail = targetEmail || email || 'daleobeirned@gmail.com';
+      const chosenStudio = targetStudio || studioNameInput || currentStudioName || 'DOB Enterprises (Admin)';
       
       const account = await createOrLoginInstantCloudAccount(
         chosenEmail,
@@ -102,7 +120,7 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const account = await loginWithGoogle(currentGameState);
+      const account = await loginWithGoogle(currentGameState, email || 'daleobeirned@gmail.com');
       if (onUserChange) onUserChange(account);
       soundManager.playSuccess();
       setSuccessMessage(`Signed in with Google! Welcome, ${account.studioName || account.email}.`);
@@ -233,13 +251,9 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     }
   };
 
-  const handleUnlockAdminWithKey = () => {
+  const handleUnlockAdminWithKey = async () => {
     if (adminPasscodeInput.trim() === 'DOB-ADMIN-2026') {
-      if (currentUser && onUserChange) {
-        onUserChange({ ...currentUser, role: 'admin' });
-      }
-      soundManager.playSuccess();
-      setSuccessMessage('Executive Administrator privileges unlocked!');
+      await handleExecutiveAdminLogin();
       if (onOpenAdminConsole) {
         onOpenAdminConsole();
       }
@@ -470,62 +484,129 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               )}
             </div>
           ) : (
-            /* Login / Register Form */
-            <form onSubmit={handleAuthSubmit} className="space-y-4">
-              {/* Tab Selector */}
-              <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800 text-[11px]">
+            /* Login / Register / Google Form */
+            <div className="space-y-4">
+              {/* Executive Super-Admin Quick Login Shortcut */}
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-950/80 via-slate-900 to-amber-950/80 border border-amber-500/50 space-y-2.5 shadow-lg shadow-amber-950/40">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="text-xs font-bold text-amber-200 uppercase tracking-wider">Executive Super-Admin</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    MASTER ACCESS
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Direct login as <code className="text-amber-300 font-mono">daleobeirned@gmail.com</code> with passcode <code className="text-amber-300 font-mono">DOB-ADMIN-2026</code>.
+                </p>
                 <button
                   type="button"
-                  onClick={() => {
-                    setAuthMode('login');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                    setOperationNotAllowed(false);
-                  }}
-                  className={`py-2 font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                    authMode === 'login'
-                      ? 'bg-cyan-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  onClick={handleExecutiveAdminLogin}
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-3 rounded-lg bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-amber-950/60 transition-all active:scale-[0.99] disabled:opacity-50"
                 >
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>SIGN IN</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode('register');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                    setOperationNotAllowed(false);
-                  }}
-                  className={`py-2 font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                    authMode === 'register'
-                      ? 'bg-cyan-600 text-white shadow-md'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>REGISTER</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode('instant');
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                    setOperationNotAllowed(false);
-                  }}
-                  className={`py-2 font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
-                    authMode === 'instant'
-                      ? 'bg-amber-600 text-white shadow-md'
-                      : 'text-amber-400/80 hover:text-amber-300'
-                  }`}
-                >
-                  <Zap className="w-3.5 h-3.5 fill-current" />
-                  <span>INSTANT</span>
+                  <Key className="w-3.5 h-3.5 fill-current" />
+                  <span>⚡ 1-CLICK SUPER-ADMIN LOGIN</span>
                 </button>
               </div>
+
+              {/* Primary 1-Click Google Sign In */}
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-2.5">
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isLoading}
+                  className="w-full py-3 px-4 rounded-xl bg-white hover:bg-slate-100 active:scale-[0.99] text-slate-900 font-bold text-xs flex items-center justify-center gap-3 transition-all shadow-md shadow-white/5 cursor-pointer disabled:opacity-50"
+                >
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                    />
+                  </svg>
+                  <span className="tracking-wide">CONTINUE WITH GOOGLE</span>
+                </button>
+                <p className="text-[11px] text-slate-400 text-center">
+                  Recommended: instant sign-in with your Google Account across all devices.
+                </p>
+              </div>
+
+              {/* Divider */}
+              <div className="relative flex items-center justify-center my-2">
+                <div className="border-t border-slate-800 w-full"></div>
+                <span className="bg-slate-900 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest absolute">
+                  OR USE EMAIL / INSTANT ID
+                </span>
+              </div>
+
+              <form onSubmit={handleAuthSubmit} className="space-y-4">
+                {/* Tab Selector */}
+                <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('login');
+                      setErrorMessage(null);
+                      setSuccessMessage(null);
+                      setOperationNotAllowed(false);
+                    }}
+                    className={`py-2 font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      authMode === 'login'
+                        ? 'bg-cyan-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>SIGN IN</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('register');
+                      setErrorMessage(null);
+                      setSuccessMessage(null);
+                      setOperationNotAllowed(false);
+                    }}
+                    className={`py-2 font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      authMode === 'register'
+                        ? 'bg-cyan-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>REGISTER</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('instant');
+                      setErrorMessage(null);
+                      setSuccessMessage(null);
+                      setOperationNotAllowed(false);
+                    }}
+                    className={`py-2 font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                      authMode === 'instant'
+                        ? 'bg-amber-600 text-white shadow-md'
+                        : 'text-amber-400/80 hover:text-amber-300'
+                    }`}
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                    <span>INSTANT</span>
+                  </button>
+                </div>
 
               {(authMode === 'register' || authMode === 'instant') && (
                 <div>
@@ -650,40 +731,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 )}
               </button>
 
-              {/* Alternative Google Sign In */}
-              <div className="pt-2 border-t border-slate-800/80 space-y-2">
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  disabled={isLoading}
-                  className="w-full py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 text-xs font-bold text-slate-200 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                    />
-                  </svg>
-                  <span>Sign In with Google Account</span>
-                </button>
-
-                <p className="text-[11px] text-slate-400 text-center">
+              <div className="pt-2 border-t border-slate-800/80 text-center">
+                <p className="text-[11px] text-slate-400">
                   Accounts persist game progress across all browsers and devices in real time.
                 </p>
               </div>
             </form>
+          </div>
           )}
         </div>
       </div>

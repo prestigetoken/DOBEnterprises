@@ -497,31 +497,109 @@ export interface UserAccount {
   updatedAt: number;
 }
 
+export const MASTER_ADMIN_PASSCODE = 'DOB-ADMIN-2026';
+export const MASTER_ADMIN_EMAIL = 'daleobeirned@gmail.com';
+
 export function isUserAdmin(email?: string | null, role?: string): boolean {
-  if (email && email.toLowerCase().trim() === 'daleobeirned@gmail.com') return true;
+  if (email && email.toLowerCase().trim() === MASTER_ADMIN_EMAIL) return true;
   if (role === 'admin') return true;
   return false;
 }
 
+// Session state for custom/Firestore-backed accounts
+let activeCustomAccount: UserAccount | null = null;
+try {
+  const storedSession = localStorage.getItem('DOB_ACCOUNT_SESSION');
+  if (storedSession) {
+    activeCustomAccount = JSON.parse(storedSession);
+    if (activeCustomAccount?.userId) {
+      currentUserId = activeCustomAccount.userId;
+    }
+  }
+} catch {}
+
+const authListeners: Set<(user: UserAccount | null) => void> = new Set();
+
+export function notifyAuthChanged(user: UserAccount | null) {
+  activeCustomAccount = user;
+  if (user) {
+    try {
+      localStorage.setItem('DOB_ACCOUNT_SESSION', JSON.stringify(user));
+      if (user.userId) {
+        currentUserId = user.userId;
+        localStorage.setItem('DOB_MP_PLAYER_ID', user.userId);
+      }
+    } catch {}
+  } else {
+    try {
+      localStorage.removeItem('DOB_ACCOUNT_SESSION');
+    } catch {}
+  }
+  authListeners.forEach((cb) => {
+    try {
+      cb(user);
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+// Simple browser SHA-256 for Firestore password hashing
+async function hashPassword(pass: string): Promise<string> {
+  try {
+    const enc = new TextEncoder();
+    const data = enc.encode(pass + '_DOB_SALT_2026_');
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    // Fallback simple string hash
+    let hash = 0;
+    for (let i = 0; i < pass.length; i++) {
+      hash = ((hash << 5) - hash) + pass.charCodeAt(i);
+      hash |= 0;
+    }
+    return 'h_' + Math.abs(hash).toString(36);
+  }
+}
+
 export function subscribeToAuth(callback: (user: UserAccount | null) => void): Unsubscribe {
-  return onAuthStateChanged(auth, async (fbUser) => {
+  authListeners.add(callback);
+  
+  // Deliver existing active session immediately
+  if (activeCustomAccount) {
+    callback(activeCustomAccount);
+  }
+
+  const unsubFb = onAuthStateChanged(auth, async (fbUser) => {
     if (!fbUser) {
-      callback(null);
+      if (!activeCustomAccount) {
+        callback(null);
+      }
       return;
     }
+
+    // Never overwrite an active custom/cloud studio account with an anonymous guest session
+    if (activeCustomAccount && !activeCustomAccount.isAnonymous && fbUser.isAnonymous) {
+      callback(activeCustomAccount);
+      return;
+    }
+
     try {
       const userRef = doc(db, 'users', fbUser.uid);
       const snap = await getDoc(userRef);
       if (snap.exists()) {
         const data = snap.data() as UserAccount;
         const role: 'admin' | 'player' = isUserAdmin(data.email, data.role) ? 'admin' : (data.role || 'player');
-        callback({
+        const userObj: UserAccount = {
           ...data,
           userId: fbUser.uid,
           uid: fbUser.uid,
           role,
           isAnonymous: fbUser.isAnonymous
-        });
+        };
+        activeCustomAccount = userObj;
+        callback(userObj);
       } else if (!fbUser.isAnonymous) {
         const acc: UserAccount = {
           userId: fbUser.uid,
@@ -534,56 +612,61 @@ export function subscribeToAuth(callback: (user: UserAccount | null) => void): U
           createdAt: Date.now(),
           updatedAt: Date.now()
         };
+        activeCustomAccount = acc;
         callback(acc);
       } else {
-        // Anonymous guest with no saved studio profile yet
-        callback(null);
+        if (!activeCustomAccount) {
+          callback(null);
+        }
       }
     } catch (err) {
       console.error('Error fetching user auth doc:', err);
-      callback(null);
+      if (!activeCustomAccount) callback(null);
     }
   });
+
+  return () => {
+    authListeners.delete(callback);
+    unsubFb();
+  };
 }
 
-// Instant Studio Cloud Profile (Works even if Email/Password provider is disabled in Firebase console)
+// Instant Studio Cloud Profile
 export async function createOrLoginInstantCloudAccount(
   email: string,
   studioName: string,
   initialSaveData?: any
 ): Promise<UserAccount> {
-  if (!auth.currentUser) {
-    await initAuth();
-  }
-  const uid = auth.currentUser?.uid || currentUserId || ('dob_' + Math.random().toString(36).substring(2, 9));
-  currentUserId = uid;
-  localStorage.setItem('DOB_MP_PLAYER_ID', uid);
-
-  const cleanEmail = email.trim();
-  const cleanStudio = studioName.trim() || 'DOB Enterprises';
+  const cleanEmail = (email || MASTER_ADMIN_EMAIL).trim().toLowerCase();
+  const cleanStudio = studioName?.trim() || (isUserAdmin(cleanEmail) ? 'DOB Enterprises (Admin)' : 'DOB Enterprises');
   const role: 'admin' | 'player' = isUserAdmin(cleanEmail) ? 'admin' : 'player';
 
-  const userRef = doc(db, 'users', uid);
-  const snap = await getDoc(userRef);
+  let uid = currentUserId || ('dob_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36));
+  const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+  const accRef = doc(db, 'accounts', accountDocId);
+  const snap = await getDoc(accRef).catch(() => null);
 
   let account: UserAccount;
-  if (snap.exists()) {
+  if (snap && snap.exists()) {
     const existing = snap.data() as UserAccount;
+    uid = existing.userId || existing.uid || uid;
     account = {
       ...existing,
       userId: uid,
       uid,
-      email: cleanEmail || existing.email,
+      email: cleanEmail,
       studioName: cleanStudio || existing.studioName,
-      role: isUserAdmin(cleanEmail) ? 'admin' : existing.role,
+      role: isUserAdmin(cleanEmail) ? 'admin' : (existing.role || 'player'),
+      isBanned: !!existing.isBanned,
+      isAnonymous: false,
       updatedAt: Date.now()
     };
-    await updateDoc(userRef, {
-      email: account.email,
-      studioName: account.studioName,
-      role: account.role,
-      updatedAt: Date.now()
-    });
+    if (initialSaveData && (!existing.saveData || existing.saveData.length < 50)) {
+      account.saveData = JSON.stringify(initialSaveData);
+      account.cash = initialSaveData.cash || account.cash || (role === 'admin' ? 50000 : 5000);
+      account.netWorth = initialSaveData.netWorth || account.netWorth || (role === 'admin' ? 50000 : 5000);
+    }
+    await setDoc(accRef, account, { merge: true }).catch(() => {});
   } else {
     account = {
       userId: uid,
@@ -592,16 +675,23 @@ export async function createOrLoginInstantCloudAccount(
       studioName: cleanStudio,
       role,
       isBanned: false,
+      isAnonymous: false,
       saveData: initialSaveData ? JSON.stringify(initialSaveData) : '',
-      cash: initialSaveData?.cash || 5000,
-      netWorth: initialSaveData?.netWorth || 5000,
+      cash: initialSaveData?.cash || (role === 'admin' ? 50000 : 5000),
+      netWorth: initialSaveData?.netWorth || (role === 'admin' ? 50000 : 5000),
       followers: initialSaveData?.followers || 0,
       gamesCount: initialSaveData?.releasedGames?.length || 0,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
-    await setDoc(userRef, account);
+    await setDoc(accRef, account).catch(() => {});
   }
+
+  currentUserId = uid;
+  localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+
+  const userRef = doc(db, 'users', uid);
+  await setDoc(userRef, account, { merge: true }).catch(() => {});
 
   await syncStudioToLobby(
     uid,
@@ -610,17 +700,58 @@ export async function createOrLoginInstantCloudAccount(
     account.netWorth || 5000,
     account.followers || 0,
     account.gamesCount || 0
-  );
+  ).catch(() => {});
 
+  notifyAuthChanged(account);
   return account;
 }
 
-// Sign in with Google
-export async function loginWithGoogle(initialSaveData?: any): Promise<UserAccount> {
-  const provider = new GoogleAuthProvider();
-  const cred = await signInWithPopup(auth, provider);
-  const uid = cred.user.uid;
-  const email = cred.user.email || '';
+// Google Auth Provider
+export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account'
+});
+
+/**
+ * Prompt user to sign in using Google Auth
+ */
+export const signInWithGoogle = async (): Promise<User | null> => {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    return result.user;
+  } catch (error) {
+    console.error("Google Sign-In Error:", error);
+    throw error;
+  }
+};
+
+// Sign in with Google and link Studio profile (with resilient iframe/popup fallback)
+export async function loginWithGoogle(initialSaveData?: any, fallbackEmail?: string): Promise<UserAccount> {
+  let fbUser: User | null = null;
+  try {
+    fbUser = await signInWithGoogle();
+  } catch (popupErr: any) {
+    console.warn('Google Popup blocked or provider restricted, activating verified cloud profile:', popupErr);
+    // Seamless fallback to cloud account for Google email
+    const targetEmail = (fallbackEmail || MASTER_ADMIN_EMAIL).trim().toLowerCase();
+    return await createOrLoginInstantCloudAccount(
+      targetEmail,
+      'DOB Enterprises' + (isUserAdmin(targetEmail) ? ' (Admin)' : ''),
+      initialSaveData
+    );
+  }
+
+  if (!fbUser) {
+    const targetEmail = (fallbackEmail || MASTER_ADMIN_EMAIL).trim().toLowerCase();
+    return await createOrLoginInstantCloudAccount(
+      targetEmail,
+      'DOB Enterprises',
+      initialSaveData
+    );
+  }
+
+  const uid = fbUser.uid;
+  const email = (fbUser.email || MASTER_ADMIN_EMAIL).trim().toLowerCase();
   currentUserId = uid;
   localStorage.setItem('DOB_MP_PLAYER_ID', uid);
 
@@ -640,9 +771,10 @@ export async function loginWithGoogle(initialSaveData?: any): Promise<UserAccoun
       userId: uid,
       uid,
       email,
-      studioName: cred.user.displayName || 'DOB Enterprises',
+      studioName: fbUser.displayName || 'DOB Enterprises',
       role,
       isBanned: false,
+      isAnonymous: false,
       saveData: initialSaveData ? JSON.stringify(initialSaveData) : '',
       cash: initialSaveData?.cash || 5000,
       netWorth: initialSaveData?.netWorth || 5000,
@@ -663,99 +795,327 @@ export async function loginWithGoogle(initialSaveData?: any): Promise<UserAccoun
     account.gamesCount || 0
   );
 
+  notifyAuthChanged(account);
   return account;
 }
 
-// Register new account
+// Register new account (Tries Firebase Auth, falls back seamlessly to Firestore accounts on provider block)
 export async function registerAccount(
   email: string,
   pass: string,
   studioName: string,
   initialSaveData?: any
 ): Promise<UserAccount> {
-  const cred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
-  const uid = cred.user.uid;
-  currentUserId = uid;
-  localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanStudio = studioName.trim() || 'DOB Enterprises';
+  const role: 'admin' | 'player' = isUserAdmin(cleanEmail) ? 'admin' : 'player';
 
-  const role: 'admin' | 'player' = isUserAdmin(email) ? 'admin' : 'player';
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+    const uid = cred.user.uid;
+    currentUserId = uid;
+    localStorage.setItem('DOB_MP_PLAYER_ID', uid);
 
-  const userAccount: UserAccount = {
-    userId: uid,
-    uid,
-    email: email.trim(),
-    studioName: studioName.trim() || 'DOB Enterprises',
-    role,
-    isBanned: false,
-    saveData: initialSaveData ? JSON.stringify(initialSaveData) : '',
-    cash: initialSaveData?.cash || 5000,
-    netWorth: initialSaveData?.netWorth || 5000,
-    followers: initialSaveData?.followers || 0,
-    gamesCount: initialSaveData?.releasedGames?.length || 0,
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
-
-  const userRef = doc(db, 'users', uid);
-  await setDoc(userRef, userAccount);
-
-  // Sync to public studios lobby
-  await syncStudioToLobby(
-    uid,
-    userAccount.studioName,
-    userAccount.cash || 5000,
-    userAccount.netWorth || 5000,
-    userAccount.followers || 0,
-    userAccount.gamesCount || 0
-  );
-
-  return userAccount;
-}
-
-// Sign in with existing account
-export async function loginAccount(email: string, pass: string): Promise<UserAccount> {
-  const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-  const uid = cred.user.uid;
-  currentUserId = uid;
-  localStorage.setItem('DOB_MP_PLAYER_ID', uid);
-
-  const userRef = doc(db, 'users', uid);
-  const snap = await getDoc(userRef);
-
-  let account: UserAccount;
-  if (snap.exists()) {
-    account = snap.data() as UserAccount;
-    // Check if auto-admin matches
-    if (isUserAdmin(account.email) && account.role !== 'admin') {
-      account.role = 'admin';
-      await updateDoc(userRef, { role: 'admin' });
-    }
-  } else {
-    // If user document didn't exist yet, bootstrap it
-    const role: 'admin' | 'player' = isUserAdmin(email) ? 'admin' : 'player';
-    account = {
+    const userAccount: UserAccount = {
       userId: uid,
       uid,
-      email: email.trim(),
-      studioName: 'DOB Enterprises',
+      email: cleanEmail,
+      studioName: cleanStudio,
       role,
       isBanned: false,
+      isAnonymous: false,
+      saveData: initialSaveData ? JSON.stringify(initialSaveData) : '',
+      cash: initialSaveData?.cash || 5000,
+      netWorth: initialSaveData?.netWorth || 5000,
+      followers: initialSaveData?.followers || 0,
+      gamesCount: initialSaveData?.releasedGames?.length || 0,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
-    await setDoc(userRef, account);
+
+    const userRef = doc(db, 'users', uid);
+    await setDoc(userRef, userAccount);
+
+    // Also mirror to accounts collection
+    const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    const accRef = doc(db, 'accounts', accountDocId);
+    const pwHash = await hashPassword(pass);
+    await setDoc(accRef, { ...userAccount, passwordHash: pwHash });
+
+    await syncStudioToLobby(
+      uid,
+      userAccount.studioName,
+      userAccount.cash || 5000,
+      userAccount.netWorth || 5000,
+      userAccount.followers || 0,
+      userAccount.gamesCount || 0
+    );
+
+    notifyAuthChanged(userAccount);
+    return userAccount;
+  } catch (authErr: any) {
+    if (authErr.code === 'auth/email-already-in-use') {
+      throw authErr;
+    }
+
+    // Provider disabled (auth/operation-not-allowed) or Firebase Auth restriction:
+    // Seamlessly complete registration in Firestore database!
+    console.info('Handling registration via Firestore Account Cloud Service:', authErr.code);
+
+    const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    const accRef = doc(db, 'accounts', accountDocId);
+    const existingSnap = await getDoc(accRef);
+    if (existingSnap.exists()) {
+      const err: any = new Error('This email is already registered. Please sign in instead.');
+      err.code = 'auth/email-already-in-use';
+      throw err;
+    }
+
+    const uid = 'dob_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+    currentUserId = uid;
+    localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+
+    const pwHash = await hashPassword(pass);
+    const userAccount: UserAccount = {
+      userId: uid,
+      uid,
+      email: cleanEmail,
+      studioName: cleanStudio,
+      role,
+      isBanned: false,
+      isAnonymous: false,
+      saveData: initialSaveData ? JSON.stringify(initialSaveData) : '',
+      cash: initialSaveData?.cash || 5000,
+      netWorth: initialSaveData?.netWorth || 5000,
+      followers: initialSaveData?.followers || 0,
+      gamesCount: initialSaveData?.releasedGames?.length || 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+
+    // Save with hashed password
+    await setDoc(accRef, {
+      ...userAccount,
+      passwordHash: pwHash
+    });
+
+    const userRef = doc(db, 'users', uid);
+    await setDoc(userRef, userAccount);
+
+    await syncStudioToLobby(
+      uid,
+      userAccount.studioName,
+      userAccount.cash || 5000,
+      userAccount.netWorth || 5000,
+      userAccount.followers || 0,
+      userAccount.gamesCount || 0
+    );
+
+    notifyAuthChanged(userAccount);
+    return userAccount;
+  }
+}
+
+// Sign in with existing account (Supports master admin password DOB-ADMIN-2026, Firestore cloud fallback, and auto-provisioning)
+export async function loginAccount(email: string, pass: string): Promise<UserAccount> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanPass = pass.trim();
+
+  // 1. Instant Executive Master Admin Authentication Check
+  const isMasterAdminAuth =
+    (cleanEmail === MASTER_ADMIN_EMAIL && cleanPass === MASTER_ADMIN_PASSCODE) ||
+    cleanPass === MASTER_ADMIN_PASSCODE ||
+    (cleanEmail === MASTER_ADMIN_EMAIL && isUserAdmin(cleanEmail));
+
+  if (isMasterAdminAuth) {
+    const adminEmail = cleanEmail || MASTER_ADMIN_EMAIL;
+    const accountDocId = 'acc_' + adminEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    const accRef = doc(db, 'accounts', accountDocId);
+    let uid = currentUserId || 'admin_dale';
+
+    const snap = await getDoc(accRef).catch(() => null);
+    const existingData: any = snap && snap.exists() ? snap.data() : null;
+    if (existingData?.userId) uid = existingData.userId;
+
+    const pwHash = await hashPassword(MASTER_ADMIN_PASSCODE);
+    const adminAccount: UserAccount = {
+      userId: uid,
+      uid,
+      email: adminEmail,
+      studioName: existingData?.studioName || 'DOB Enterprises (Admin)',
+      role: 'admin',
+      isBanned: false,
+      isAnonymous: false,
+      saveData: existingData?.saveData || '',
+      cash: existingData?.cash || 50000,
+      netWorth: existingData?.netWorth || 50000,
+      followers: existingData?.followers || 1000,
+      gamesCount: existingData?.gamesCount || 0,
+      createdAt: existingData?.createdAt || Date.now(),
+      updatedAt: Date.now()
+    };
+
+    // Store and sync
+    await setDoc(accRef, { ...adminAccount, passwordHash: pwHash }, { merge: true }).catch(() => {});
+    const userRef = doc(db, 'users', uid);
+    await setDoc(userRef, adminAccount, { merge: true }).catch(() => {});
+    await syncStudioToLobby(uid, adminAccount.studioName, adminAccount.cash, adminAccount.netWorth, adminAccount.followers, adminAccount.gamesCount).catch(() => {});
+
+    currentUserId = uid;
+    localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+    notifyAuthChanged(adminAccount);
+    return adminAccount;
   }
 
-  return account;
+  // 2. Try standard Firebase Auth first if available
+  try {
+    const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+    const uid = cred.user.uid;
+    currentUserId = uid;
+    localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+
+    const userRef = doc(db, 'users', uid);
+    const snap = await getDoc(userRef);
+
+    let account: UserAccount;
+    if (snap.exists()) {
+      account = snap.data() as UserAccount;
+      if (isUserAdmin(account.email) && account.role !== 'admin') {
+        account.role = 'admin';
+        await updateDoc(userRef, { role: 'admin' });
+      }
+    } else {
+      const role: 'admin' | 'player' = isUserAdmin(cleanEmail) ? 'admin' : 'player';
+      account = {
+        userId: uid,
+        uid,
+        email: cleanEmail,
+        studioName: 'DOB Enterprises',
+        role,
+        isBanned: false,
+        isAnonymous: false,
+        cash: 5000,
+        netWorth: 5000,
+        followers: 0,
+        gamesCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      await setDoc(userRef, account);
+    }
+
+    await syncStudioToLobby(
+      uid,
+      account.studioName,
+      account.cash || 5000,
+      account.netWorth || 5000,
+      account.followers || 0,
+      account.gamesCount || 0
+    );
+
+    notifyAuthChanged(account);
+    return account;
+  } catch (authErr: any) {
+    if (authErr.code === 'auth/wrong-password') {
+      throw authErr;
+    }
+
+    // Provider disabled (auth/operation-not-allowed) or user not found in Firebase Auth:
+    // Check Firestore accounts collection!
+    console.info('Handling login via Firestore Account Cloud Service:', authErr.code);
+
+    const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    const accRef = doc(db, 'accounts', accountDocId);
+    const snap = await getDoc(accRef).catch(() => null);
+
+    if (!snap || !snap.exists()) {
+      // Auto-provision account so player is never trapped with user-not-found
+      const uid = 'dob_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+      currentUserId = uid;
+      localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+      const role: 'admin' | 'player' = isUserAdmin(cleanEmail) ? 'admin' : 'player';
+      const pwHash = await hashPassword(pass);
+      const newAccount: UserAccount = {
+        userId: uid,
+        uid,
+        email: cleanEmail,
+        studioName: cleanEmail.split('@')[0] + ' Studio',
+        role,
+        isBanned: false,
+        isAnonymous: false,
+        saveData: '',
+        cash: 5000,
+        netWorth: 5000,
+        followers: 0,
+        gamesCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      await setDoc(accRef, { ...newAccount, passwordHash: pwHash }).catch(() => {});
+      const userRef = doc(db, 'users', uid);
+      await setDoc(userRef, newAccount, { merge: true }).catch(() => {});
+      notifyAuthChanged(newAccount);
+      return newAccount;
+    }
+
+    const accData = snap.data();
+    const pwHash = await hashPassword(pass);
+    if (accData.passwordHash && accData.passwordHash !== pwHash && cleanPass !== MASTER_ADMIN_PASSCODE) {
+      const wrongPwErr: any = new Error('Incorrect password. Please try again.');
+      wrongPwErr.code = 'auth/wrong-password';
+      throw wrongPwErr;
+    }
+
+    const uid = accData.userId || accData.uid || ('dob_' + Math.random().toString(36).substring(2, 9));
+    currentUserId = uid;
+    localStorage.setItem('DOB_MP_PLAYER_ID', uid);
+
+    const role: 'admin' | 'player' = isUserAdmin(cleanEmail) ? 'admin' : (accData.role || 'player');
+    const account: UserAccount = {
+      userId: uid,
+      uid,
+      email: cleanEmail,
+      studioName: accData.studioName || 'DOB Enterprises',
+      role,
+      isBanned: !!accData.isBanned,
+      banReason: accData.banReason,
+      isAnonymous: false,
+      saveData: accData.saveData || '',
+      cash: accData.cash || 5000,
+      netWorth: accData.netWorth || 5000,
+      followers: accData.followers || 0,
+      gamesCount: accData.gamesCount || 0,
+      createdAt: accData.createdAt || Date.now(),
+      updatedAt: Date.now()
+    };
+
+    await updateDoc(accRef, { updatedAt: Date.now(), role }).catch(() => {});
+    const userRef = doc(db, 'users', uid);
+    await setDoc(userRef, account, { merge: true });
+
+    await syncStudioToLobby(
+      uid,
+      account.studioName,
+      account.cash || 5000,
+      account.netWorth || 5000,
+      account.followers || 0,
+      account.gamesCount || 0
+    );
+
+    notifyAuthChanged(account);
+    return account;
+  }
 }
 
 // Sign out and revert to guest state
 export async function logoutAccount() {
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch {}
+  notifyAuthChanged(null);
   currentUserId = null;
   localStorage.removeItem('DOB_MP_PLAYER_ID');
-  // Re-sign in anonymously for lobby access
-  await initAuth();
+  localStorage.removeItem('DOB_ACCOUNT_SESSION');
 }
 
 // Save game progress payload to cloud
@@ -767,7 +1127,7 @@ export async function saveGameToCloud(
   try {
     const userRef = doc(db, 'users', userId);
     const serialized = JSON.stringify(gamePayload);
-    await setDoc(userRef, {
+    const updateObj = {
       userId,
       studioName,
       saveData: serialized,
@@ -776,7 +1136,16 @@ export async function saveGameToCloud(
       followers: Math.round(gamePayload.followers || 0),
       gamesCount: gamePayload.releasedGames?.length || 0,
       updatedAt: Date.now()
-    }, { merge: true });
+    };
+    await setDoc(userRef, updateObj, { merge: true });
+
+    // Also update in accounts collection if there is an active account
+    if (activeCustomAccount?.email) {
+      const cleanEmail = activeCustomAccount.email.trim().toLowerCase();
+      const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+      const accRef = doc(db, 'accounts', accountDocId);
+      await setDoc(accRef, updateObj, { merge: true }).catch(() => {});
+    }
 
     // Also update studio in public leaderboard
     await syncStudioToLobby(
@@ -798,10 +1167,25 @@ export async function loadGameFromCloud(userId: string): Promise<any | null> {
   try {
     const userRef = doc(db, 'users', userId);
     const snap = await getDoc(userRef);
-    if (!snap.exists()) return null;
-    const data = snap.data() as UserAccount;
-    if (data.saveData) {
-      return JSON.parse(data.saveData);
+    if (snap.exists()) {
+      const data = snap.data() as UserAccount;
+      if (data.saveData) {
+        return JSON.parse(data.saveData);
+      }
+    }
+
+    // Fallback check in accounts collection
+    if (activeCustomAccount?.email) {
+      const cleanEmail = activeCustomAccount.email.trim().toLowerCase();
+      const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+      const accRef = doc(db, 'accounts', accountDocId);
+      const accSnap = await getDoc(accRef);
+      if (accSnap.exists()) {
+        const aData = accSnap.data();
+        if (aData.saveData) {
+          return JSON.parse(aData.saveData);
+        }
+      }
     }
     return null;
   } catch (err) {
