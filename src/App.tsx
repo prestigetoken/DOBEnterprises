@@ -939,6 +939,7 @@ export default function App() {
           isOpen={isAdminModalOpen}
           onClose={() => setIsAdminModalOpen(false)}
           currentUser={currentUser}
+          currentAdminEmail={currentUser?.email || 'daleobeirned@gmail.com'}
           onApplyGameStatePatch={(patch) => {
             if (typeof patch.cash === 'number') setCash(patch.cash);
             if (typeof patch.followers === 'number') setFollowers(patch.followers);
@@ -1281,6 +1282,7 @@ export default function App() {
         isOpen={isAdminModalOpen}
         onClose={() => setIsAdminModalOpen(false)}
         currentUser={currentUser}
+        currentAdminEmail={currentUser?.email || 'daleobeirned@gmail.com'}
         onApplyGameStatePatch={(patch) => {
           if (typeof patch.cash === 'number') setCash(patch.cash);
           if (typeof patch.followers === 'number') setFollowers(patch.followers);

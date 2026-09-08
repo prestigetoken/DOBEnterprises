@@ -1430,6 +1430,9 @@ export interface AdminPlayerRecord {
   isBanned?: boolean;
   banReason?: string;
   lastActive?: number;
+  studioDocId?: string;
+  userDocId?: string;
+  accountDocId?: string;
 }
 
 // Fetch all registered studios and user profiles for Admin inspection
@@ -1437,20 +1440,22 @@ export async function adminFetchAllPlayers(): Promise<AdminPlayerRecord[]> {
   const map = new Map<string, AdminPlayerRecord>();
 
   try {
-    // 1. Fetch from studios
+    // 1. Fetch from studios collection
     const studiosRef = collection(db, 'studios');
     const sSnap = await getDocs(studiosRef);
     sSnap.forEach((d) => {
       const data = d.data() as OnlineStudio;
-      map.set(data.studioId, {
-        id: data.studioId,
+      const id = data.studioId || d.id;
+      map.set(id, {
+        id,
         studioName: data.name || 'Unnamed Studio',
-        cash: data.cash || 0,
-        netWorth: data.netWorth || 0,
-        followers: data.followers || 0,
-        gamesCount: data.gamesCount || 0,
+        cash: typeof data.cash === 'number' ? data.cash : 0,
+        netWorth: typeof data.netWorth === 'number' ? data.netWorth : 0,
+        followers: typeof data.followers === 'number' ? data.followers : 0,
+        gamesCount: typeof data.gamesCount === 'number' ? data.gamesCount : 0,
         isBanned: false,
-        lastActive: data.lastActive
+        lastActive: data.lastActive,
+        studioDocId: d.id
       });
     });
 
@@ -1459,13 +1464,14 @@ export async function adminFetchAllPlayers(): Promise<AdminPlayerRecord[]> {
     const uSnap = await getDocs(usersRef);
     uSnap.forEach((d) => {
       const uData = d.data() as UserAccount;
-      const existing = map.get(uData.userId) || {
-        id: uData.userId,
+      const id = uData.userId || d.id;
+      const existing = map.get(id) || {
+        id,
         studioName: uData.studioName || 'Studio',
-        cash: uData.cash || 5000,
-        netWorth: uData.netWorth || 5000,
-        followers: uData.followers || 0,
-        gamesCount: uData.gamesCount || 0,
+        cash: typeof uData.cash === 'number' ? uData.cash : 5000,
+        netWorth: typeof uData.netWorth === 'number' ? uData.netWorth : 5000,
+        followers: typeof uData.followers === 'number' ? uData.followers : 0,
+        gamesCount: typeof uData.gamesCount === 'number' ? uData.gamesCount : 0,
         lastActive: uData.updatedAt
       };
 
@@ -1473,13 +1479,14 @@ export async function adminFetchAllPlayers(): Promise<AdminPlayerRecord[]> {
       existing.role = uData.role;
       existing.isBanned = !!uData.isBanned;
       existing.banReason = uData.banReason;
+      existing.userDocId = d.id;
       if (uData.studioName) existing.studioName = uData.studioName;
       if (uData.cash !== undefined) existing.cash = uData.cash;
       if (uData.netWorth !== undefined) existing.netWorth = uData.netWorth;
       if (uData.followers !== undefined) existing.followers = uData.followers;
       if (uData.gamesCount !== undefined) existing.gamesCount = uData.gamesCount;
 
-      map.set(uData.userId, existing);
+      map.set(id, existing);
     });
 
     // 3. Fetch from accounts collection to guarantee all registered player accounts appear
@@ -1495,20 +1502,25 @@ export async function adminFetchAllPlayers(): Promise<AdminPlayerRecord[]> {
             studioName: aData.studioName || 'Studio',
             email: aData.email,
             role: aData.role,
-            cash: aData.cash || 5000,
-            netWorth: aData.netWorth || 5000,
-            followers: aData.followers || 0,
-            gamesCount: aData.gamesCount || 0,
+            cash: typeof aData.cash === 'number' ? aData.cash : 5000,
+            netWorth: typeof aData.netWorth === 'number' ? aData.netWorth : 5000,
+            followers: typeof aData.followers === 'number' ? aData.followers : 0,
+            gamesCount: typeof aData.gamesCount === 'number' ? aData.gamesCount : 0,
             isBanned: !!aData.isBanned,
             banReason: aData.banReason,
-            lastActive: aData.updatedAt || aData.createdAt
+            lastActive: aData.updatedAt || aData.createdAt,
+            accountDocId: d.id
           });
         } else {
           const item = map.get(id)!;
+          item.accountDocId = d.id;
           if (aData.email && !item.email) item.email = aData.email;
           if (aData.role && !item.role) item.role = aData.role;
           if (aData.isBanned) item.isBanned = true;
           if (aData.banReason) item.banReason = aData.banReason;
+          if (aData.studioName && (!item.studioName || item.studioName === 'Unnamed Studio')) {
+            item.studioName = aData.studioName;
+          }
         }
       });
     }
@@ -1643,36 +1655,121 @@ export async function adminBroadcastAnnouncement(text: string) {
   );
 }
 
-// Admin: Erase a single player and their entire player account
-export async function adminDeletePlayer(playerId: string, playerEmail?: string, studioName?: string) {
+// Admin: Clear the entire board (delete all studios from /studios collection)
+export async function adminClearBoard(keepMasterAdmin: boolean = true): Promise<{ clearedCount: number }> {
+  let clearedCount = 0;
   try {
-    // 1. Delete from studios collection
-    const studioRef = doc(db, 'studios', playerId);
-    await deleteDoc(studioRef).catch(() => {});
+    const studiosRef = collection(db, 'studios');
+    const snap = await getDocs(studiosRef);
+    for (const d of snap.docs) {
+      const data = d.data() as OnlineStudio;
+      const isMasterAdmin =
+        d.id === 'admin_dale' ||
+        data.studioId === 'admin_dale' ||
+        (data.name && data.name.toLowerCase().includes('admin') && data.name.toLowerCase().includes('dale'));
 
-    // 2. Delete from users collection
-    const userRef = doc(db, 'users', playerId);
-    await deleteDoc(userRef).catch(() => {});
+      if (!keepMasterAdmin || !isMasterAdmin) {
+        await deleteDoc(d.ref);
+        clearedCount++;
+      }
+    }
 
-    // 3. Delete from accounts collection by computed accountDocId
-    if (playerEmail) {
-      const cleanEmail = playerEmail.trim().toLowerCase();
-      const accountDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    await sendGlobalChatMessage(
+      'admin_console',
+      'ADMIN SYSTEM',
+      `🧹 BOARD CLEARED: The live studio leaderboard board was cleared by Executive Administration (${clearedCount} studios wiped).`,
+      'announcement'
+    ).catch(() => {});
+
+    return { clearedCount };
+  } catch (err) {
+    console.error('Admin clear board failed:', err);
+    throw err;
+  }
+}
+
+// Admin: Erase a single player and their entire player account across all collections
+export async function adminDeletePlayer(
+  playerId: string,
+  playerEmail?: string,
+  studioName?: string,
+  studioDocId?: string,
+  userDocId?: string,
+  accountDocId?: string
+) {
+  try {
+    // 1. Direct document deletion if specific doc IDs are provided
+    if (studioDocId) {
+      await deleteDoc(doc(db, 'studios', studioDocId)).catch(() => {});
+    }
+    if (userDocId) {
+      await deleteDoc(doc(db, 'users', userDocId)).catch(() => {});
+    }
+    if (accountDocId) {
       await deleteDoc(doc(db, 'accounts', accountDocId)).catch(() => {});
     }
 
-    // 4. Also scan accounts collection for any matching record by userId or email
+    // 2. Direct delete by playerId
+    if (playerId) {
+      await deleteDoc(doc(db, 'studios', playerId)).catch(() => {});
+      await deleteDoc(doc(db, 'users', playerId)).catch(() => {});
+      await deleteDoc(doc(db, 'accounts', playerId)).catch(() => {});
+    }
+
+    // 3. Direct delete by computed account document ID
+    if (playerEmail) {
+      const cleanEmail = playerEmail.trim().toLowerCase();
+      const directAccDocId = 'acc_' + cleanEmail.replace(/[^a-zA-Z0-9]/g, '_');
+      await deleteDoc(doc(db, 'accounts', directAccDocId)).catch(() => {});
+    }
+
+    // 4. Sweep studios collection for any matches on ID or studioName
+    const studiosRef = collection(db, 'studios');
+    const sSnap = await getDocs(studiosRef).catch(() => null);
+    if (sSnap) {
+      for (const d of sSnap.docs) {
+        const data = d.data() as OnlineStudio;
+        if (
+          d.id === playerId ||
+          data.studioId === playerId ||
+          (studioName && data.name?.trim().toLowerCase() === studioName.trim().toLowerCase())
+        ) {
+          await deleteDoc(d.ref).catch(() => {});
+        }
+      }
+    }
+
+    // 5. Sweep users collection
+    const usersRef = collection(db, 'users');
+    const uSnap = await getDocs(usersRef).catch(() => null);
+    if (uSnap) {
+      for (const d of uSnap.docs) {
+        const data = d.data() as UserAccount;
+        if (
+          d.id === playerId ||
+          data.userId === playerId ||
+          (playerEmail && data.email?.toLowerCase() === playerEmail.toLowerCase()) ||
+          (studioName && data.studioName?.trim().toLowerCase() === studioName.trim().toLowerCase())
+        ) {
+          await deleteDoc(d.ref).catch(() => {});
+        }
+      }
+    }
+
+    // 6. Sweep accounts collection
     const accsRef = collection(db, 'accounts');
     const aSnap = await getDocs(accsRef).catch(() => null);
     if (aSnap) {
-      for (const aDoc of aSnap.docs) {
-        const data = aDoc.data();
+      for (const d of aSnap.docs) {
+        const data = d.data();
         if (
+          d.id === playerId ||
           data.userId === playerId ||
           data.uid === playerId ||
-          (playerEmail && data.email?.toLowerCase() === playerEmail.toLowerCase())
+          (playerEmail && data.email?.toLowerCase() === playerEmail.toLowerCase()) ||
+          (studioName && data.studioName?.trim().toLowerCase() === studioName.trim().toLowerCase())
         ) {
-          await deleteDoc(aDoc.ref).catch(() => {});
+          await deleteDoc(d.ref).catch(() => {});
         }
       }
     }
@@ -1696,45 +1793,72 @@ export async function adminDeleteAllPlayers(adminEmailToKeep: string = MASTER_AD
   try {
     const keepEmail = adminEmailToKeep.trim().toLowerCase();
 
-    // 1. Delete all non-admin studios
+    // 1. Delete all non-admin studios from /studios (clears the board)
     const studiosRef = collection(db, 'studios');
     const sSnap = await getDocs(studiosRef);
     for (const d of sSnap.docs) {
       const data = d.data() as OnlineStudio;
-      if (data.studioId !== 'admin_dale') {
-        await deleteDoc(d.ref).catch(() => {});
+      const isMasterAdminStudio =
+        d.id === 'admin_dale' ||
+        data.studioId === 'admin_dale' ||
+        (data.name && data.name.toLowerCase().includes('admin') && data.name.toLowerCase().includes('dale'));
+
+      if (!isMasterAdminStudio) {
+        await deleteDoc(d.ref);
         count++;
       }
     }
 
-    // 2. Delete all non-admin users
+    // 2. Delete all non-admin users from /users
     const usersRef = collection(db, 'users');
     const uSnap = await getDocs(usersRef);
     for (const d of uSnap.docs) {
       const data = d.data() as UserAccount;
-      if (
-        data.email?.toLowerCase() !== keepEmail &&
-        data.role !== 'admin' &&
-        d.id !== 'admin_dale'
-      ) {
-        await deleteDoc(d.ref).catch(() => {});
+      const isMasterAdminUser =
+        d.id === 'admin_dale' ||
+        data.userId === 'admin_dale' ||
+        data.role === 'admin' ||
+        (data.email && data.email.toLowerCase() === keepEmail);
+
+      if (!isMasterAdminUser) {
+        await deleteDoc(d.ref);
         count++;
       }
     }
 
-    // 3. Delete all non-admin accounts
+    // 3. Delete all non-admin accounts from /accounts
     const accsRef = collection(db, 'accounts');
     const aSnap = await getDocs(accsRef).catch(() => null);
     if (aSnap) {
       for (const d of aSnap.docs) {
         const data = d.data();
-        if (
-          data.email?.toLowerCase() !== keepEmail &&
-          data.role !== 'admin'
-        ) {
-          await deleteDoc(d.ref).catch(() => {});
+        const isMasterAdminAcc =
+          d.id === 'acc_' + keepEmail.replace(/[^a-zA-Z0-9]/g, '_') ||
+          data.role === 'admin' ||
+          (data.email && data.email.toLowerCase() === keepEmail);
+
+        if (!isMasterAdminAcc) {
+          await deleteDoc(d.ref);
           count++;
         }
+      }
+    }
+
+    // 4. Clean up pending lawsuits
+    const lrRef = collection(db, 'lawsuits');
+    const lrSnap = await getDocs(lrRef).catch(() => null);
+    if (lrSnap) {
+      for (const d of lrSnap.docs) {
+        await deleteDoc(d.ref).catch(() => {});
+      }
+    }
+
+    // 5. Clean up pending friend requests
+    const frRef = collection(db, 'friend_requests');
+    const frSnap = await getDocs(frRef).catch(() => null);
+    if (frSnap) {
+      for (const d of frSnap.docs) {
+        await deleteDoc(d.ref).catch(() => {});
       }
     }
 

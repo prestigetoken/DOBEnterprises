@@ -25,6 +25,7 @@ import {
   adminUpdatePlayerValues, 
   adminSetPlayerBan, 
   adminResetLeaderboard, 
+  adminClearBoard,
   adminBroadcastAnnouncement,
   adminDeletePlayer,
   adminDeleteAllPlayers,
@@ -76,6 +77,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // Feedback
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isConfirmingReset, setIsConfirmingReset] = useState(false);
+  const [isConfirmingClearBoard, setIsConfirmingClearBoard] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -183,7 +185,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     setIsLoading(true);
     setStatusMessage(null);
     try {
-      await adminDeletePlayer(player.id, player.email, player.studioName);
+      await adminDeletePlayer(
+        player.id, 
+        player.email, 
+        player.studioName,
+        player.studioDocId,
+        player.userDocId,
+        player.accountDocId
+      );
       soundManager.playGavel();
       setStatusMessage({
         type: 'success',
@@ -217,6 +226,27 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     } catch (err: any) {
       soundManager.playError();
       setStatusMessage({ type: 'error', text: 'Failed to erase all players: ' + err.message });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClearBoard = async () => {
+    setIsLoading(true);
+    setStatusMessage(null);
+    try {
+      const result = await adminClearBoard(true);
+      soundManager.playGavel();
+      setStatusMessage({
+        type: 'success',
+        text: `Successfully cleared the live board! Removed ${result.clearedCount} studios from public listings.`
+      });
+      setIsConfirmingClearBoard(false);
+      await loadPlayers();
+      if (onRefreshLeaderboard) onRefreshLeaderboard();
+    } catch (err: any) {
+      soundManager.playError();
+      setStatusMessage({ type: 'error', text: 'Failed to clear board: ' + err.message });
     } finally {
       setIsLoading(false);
     }
@@ -364,7 +394,19 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   />
                 </div>
 
-                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    onClick={() => {
+                      setIsConfirmingClearBoard(true);
+                    }}
+                    disabled={isLoading}
+                    className="px-3 py-2 rounded-xl bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-xs text-amber-200 font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-md shadow-amber-950/40 disabled:opacity-50"
+                    title="Wipe all studios from the public board & leaderboard"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Clear Board</span>
+                  </button>
+
                   <button
                     onClick={() => {
                       setIsConfirmingEraseAll(true);
@@ -379,15 +421,61 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </button>
 
                   <button
-                    onClick={loadPlayers}
+                    onClick={async () => {
+                      setSearchQuery('');
+                      await loadPlayers();
+                      soundManager.playCashChime();
+                      setStatusMessage({
+                        type: 'success',
+                        text: `Board & registry refreshed from live Firestore database (${players.length} records).`
+                      });
+                    }}
                     disabled={isLoading}
                     className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs text-slate-300 font-bold flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                    <span>Refresh Registry</span>
+                    <span>Refresh Registry {players.length > 0 ? `(${players.length})` : ''}</span>
                   </button>
                 </div>
               </div>
+
+              {/* Clear Board Confirmation Drawer */}
+              {isConfirmingClearBoard && (
+                <div className="p-5 rounded-2xl bg-amber-950/95 border-2 border-amber-500 shadow-2xl space-y-3.5 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5 text-amber-300 font-bold text-sm">
+                      <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                      <span>CLEAR THE BOARD: WIPE ALL STUDIOS FROM PUBLIC BOARD</span>
+                    </div>
+                    <button
+                      onClick={() => setIsConfirmingClearBoard(false)}
+                      className="text-slate-400 hover:text-white p-1 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-amber-100 leading-relaxed bg-black/40 p-3 rounded-xl border border-amber-800/60">
+                    This will immediately delete all registered studios from the public multiplayer board and leaderboard while keeping the master administrator studio intact.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={handleClearBoard}
+                      disabled={isLoading}
+                      className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs shadow-lg flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{isLoading ? 'Clearing Board...' : 'YES, CLEAR THE BOARD NOW'}</span>
+                    </button>
+                    <button
+                      onClick={() => setIsConfirmingClearBoard(false)}
+                      disabled={isLoading}
+                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Erase Single Player Confirmation Modal / Banner */}
               {playerToErase && (
@@ -824,6 +912,57 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   >
                     <RotateCcw className="w-4 h-4" />
                     <span>INITIATE LEADERBOARD SEASON RESET</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Clear Entire Board Card */}
+              <div className="p-5 rounded-2xl bg-slate-900/80 border border-amber-500/40 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                    <Trash2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Clear Live Board & Studios</h3>
+                    <p className="text-xs text-slate-400">
+                      Instantly wipe all studios from the public multiplayer registry & leaderboard.
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                  This clears the <code>studios</code> collection in Firestore, completely emptying the active board and leaderboard for a clean slate.
+                </p>
+
+                {isConfirmingClearBoard ? (
+                  <div className="p-4 rounded-xl bg-amber-950/90 border border-amber-500 space-y-3 animate-in fade-in">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-200">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>ARE YOU SURE YOU WANT TO CLEAR ALL STUDIOS FROM THE BOARD?</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleClearBoard}
+                        disabled={isLoading}
+                        className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs shadow-lg cursor-pointer transition-all disabled:opacity-50"
+                      >
+                        {isLoading ? 'Clearing Board...' : 'YES, CLEAR THE ENTIRE BOARD'}
+                      </button>
+                      <button
+                        onClick={() => setIsConfirmingClearBoard(false)}
+                        className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition-all"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setIsConfirmingClearBoard(true)}
+                    className="py-3 px-5 rounded-xl font-bold text-xs tracking-wider uppercase text-slate-950 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 shadow-lg shadow-amber-950/60 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>CLEAR LIVE BOARD (WIPE STUDIOS)</span>
                   </button>
                 )}
               </div>
