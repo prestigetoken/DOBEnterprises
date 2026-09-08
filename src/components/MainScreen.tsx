@@ -13,7 +13,9 @@ import {
   RotateCcw,
   Code2,
   Lock,
-  Globe
+  Globe,
+  Cloud,
+  ShieldAlert
 } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
@@ -26,6 +28,10 @@ interface MainScreenProps {
   onEnterGame: (chosenName: string) => void;
   onResetGame: () => void;
   onOpenMultiplayer?: () => void;
+  currentUser?: { email?: string; role?: string } | null;
+  isAdmin?: boolean;
+  onOpenAccount?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 const NAME_PRESETS = [
@@ -45,7 +51,11 @@ export const MainScreen: React.FC<MainScreenProps> = ({
   releasedGamesCount,
   onEnterGame,
   onResetGame,
-  onOpenMultiplayer
+  onOpenMultiplayer,
+  currentUser,
+  isAdmin,
+  onOpenAccount,
+  onOpenAdmin
 }) => {
   const [studioName, setStudioName] = useState(currentStudioName || 'DOB Enterprises');
   const [soundEnabled, setSoundEnabled] = useState(soundManager.enabled);
@@ -220,6 +230,28 @@ export const MainScreen: React.FC<MainScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {onOpenAccount && (
+            <button
+              onClick={onOpenAccount}
+              className="px-3 py-1.5 rounded-xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 transition-colors shadow-lg cursor-pointer flex items-center gap-1.5"
+              title="Sign in or Cloud Save"
+            >
+              <Cloud className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="max-w-[120px] truncate">{currentUser?.email ? currentUser.email.split('@')[0] : 'Sign In'}</span>
+            </button>
+          )}
+
+          {isAdmin && onOpenAdmin && (
+            <button
+              onClick={onOpenAdmin}
+              className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/60 text-amber-300 transition-colors shadow-lg cursor-pointer flex items-center gap-1.5 font-bold"
+              title="Executive Admin Console"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+              <span>Admin</span>
+            </button>
+          )}
+
           <button
             onClick={handleToggleSound}
             className="p-2 rounded-xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 text-slate-300 hover:text-cyan-300 transition-colors shadow-lg cursor-pointer"

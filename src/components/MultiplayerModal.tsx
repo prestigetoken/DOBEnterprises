@@ -17,7 +17,15 @@ import {
   Flame,
   Radio,
   RefreshCw,
-  Clock
+  Clock,
+  User,
+  UserPlus,
+  UserCheck,
+  UserX,
+  Gift,
+  ShieldCheck,
+  Search,
+  CheckCircle2
 } from 'lucide-react';
 import { 
   getOrCreatePlayerId,
@@ -39,7 +47,16 @@ import {
   LiveChatMessage,
   PvPLawsuitData,
   LobbyRoom,
-  RoomParticipant
+  RoomParticipant,
+  UserAccount,
+  FriendRequestData,
+  FriendItem,
+  sendFriendRequest,
+  subscribeToIncomingFriendRequests,
+  respondToFriendRequest,
+  subscribeToFriends,
+  removeFriend,
+  isUserAdmin
 } from '../firebase';
 import { soundManager } from '../utils/audio';
 
@@ -53,6 +70,9 @@ interface MultiplayerModalProps {
   releasedGamesCount: number;
   onDeductCash: (amount: number) => void;
   onAddCash: (amount: number) => void;
+  currentUser?: UserAccount | null;
+  onOpenAccount?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
@@ -64,10 +84,20 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
   followers,
   releasedGamesCount,
   onDeductCash,
-  onAddCash
+  onAddCash,
+  currentUser,
+  onOpenAccount,
+  onOpenAdmin
 }) => {
-  const [activeTab, setActiveTab] = useState<'global' | 'friends'>('global');
+  const [activeTab, setActiveTab] = useState<'global' | 'friends' | 'social'>('global');
   const myPlayerId = getOrCreatePlayerId();
+
+  // Friend Requests & Friends List state
+  const [friendRequests, setFriendRequests] = useState<FriendRequestData[]>([]);
+  const [friendsList, setFriendsList] = useState<FriendItem[]>([]);
+  const [friendTargetInput, setFriendTargetInput] = useState('');
+  const [friendActionStatus, setFriendActionStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSendingFriendReq, setIsSendingFriendReq] = useState(false);
 
   // Global Lobby State
   const [leaderboard, setLeaderboard] = useState<OnlineStudio[]>([]);
@@ -107,10 +137,20 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
       setMyLawsuits(suits);
     });
 
+    const unsubFriendReqs = subscribeToIncomingFriendRequests(myPlayerId, (reqs) => {
+      setFriendRequests(reqs);
+    });
+
+    const unsubFriends = subscribeToFriends(myPlayerId, (friends) => {
+      setFriendsList(friends);
+    });
+
     return () => {
       unsubLeaderboard();
       unsubChat();
       unsubLawsuits();
+      unsubFriendReqs();
+      unsubFriends();
     };
   }, [isOpen, myPlayerId]);
 
@@ -238,8 +278,81 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
     }
   };
 
+  // Friend Handlers
+  const handleSendFriendRequest = async (targetQuery: string) => {
+    if (!targetQuery.trim()) return;
+    setIsSendingFriendReq(true);
+    setFriendActionStatus(null);
+    try {
+      const res = await sendFriendRequest(myPlayerId, myStudioName, targetQuery.trim());
+      if (res.success) {
+        soundManager.playSuccess();
+        setFriendActionStatus({ type: 'success', text: res.message });
+        setFriendTargetInput('');
+      } else {
+        soundManager.playError();
+        setFriendActionStatus({ type: 'error', text: res.message });
+      }
+    } catch (err: any) {
+      soundManager.playError();
+      setFriendActionStatus({ type: 'error', text: err.message || 'Failed to send request' });
+    } finally {
+      setIsSendingFriendReq(false);
+    }
+  };
+
+  const handleRespondFriendRequest = async (req: FriendRequestData, accept: boolean) => {
+    try {
+      await respondToFriendRequest(
+        req.requestId,
+        accept,
+        req.senderId,
+        req.senderStudioName,
+        req.receiverId,
+        req.receiverStudioName
+      );
+      if (accept) {
+        soundManager.playCashSound();
+        setFriendActionStatus({ type: 'success', text: `Accepted friend request from "${req.senderStudioName}"!` });
+      } else {
+        soundManager.playKeyClick();
+        setFriendActionStatus({ type: 'success', text: `Declined request from "${req.senderStudioName}".` });
+      }
+    } catch (err: any) {
+      setFriendActionStatus({ type: 'error', text: 'Error responding to friend request: ' + err.message });
+    }
+  };
+
+  const handleRemoveFriend = async (friend: FriendItem) => {
+    try {
+      await removeFriend(myPlayerId, friend.friendId);
+      soundManager.playKeyClick();
+      setFriendActionStatus({ type: 'success', text: `Removed "${friend.studioName}" from friends.` });
+    } catch (err: any) {
+      setFriendActionStatus({ type: 'error', text: 'Error removing friend: ' + err.message });
+    }
+  };
+
+  const handleGiftFriend = async (friend: FriendItem) => {
+    const giftAmount = 5000;
+    if (cash < giftAmount) {
+      setFriendActionStatus({ type: 'error', text: `You need at least $${giftAmount.toLocaleString()} to wire a gift package.` });
+      return;
+    }
+    onDeductCash(giftAmount);
+    soundManager.playCashSound();
+    await sendGlobalChatMessage(
+      myPlayerId,
+      myStudioName,
+      `🎁 Wired a $${giftAmount.toLocaleString()} corporate endowment to friendly studio: ${friend.studioName}!`,
+      'chat'
+    );
+    setFriendActionStatus({ type: 'success', text: `Gift package of $${giftAmount.toLocaleString()} wired to ${friend.studioName}!` });
+  };
+
   const isHost = roomData?.hostId === myPlayerId;
   const myParticipant = roomMembers.find(m => m.memberId === myPlayerId);
+  const userIsAdmin = isUserAdmin(currentUser?.email, currentUser?.role);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
@@ -268,6 +381,28 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenAccount && (
+              <button
+                onClick={onOpenAccount}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-cyan-500/50 text-xs text-slate-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
+                title="Account Authentication & Cloud Save"
+              >
+                <User className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="max-w-[130px] truncate">{currentUser?.email ? currentUser.email : 'Sign In / Account'}</span>
+              </button>
+            )}
+
+            {userIsAdmin && onOpenAdmin && (
+              <button
+                onClick={onOpenAdmin}
+                className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-xs text-amber-300 font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-950/40"
+                title="Open Executive Admin Console"
+              >
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                <span>Admin</span>
+              </button>
+            )}
+
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
@@ -278,7 +413,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="px-5 pt-3 border-b border-slate-800 bg-[#070b13] flex gap-2">
+        <div className="px-5 pt-3 border-b border-slate-800 bg-[#070b13] flex flex-wrap gap-2 items-center">
           <button
             onClick={() => setActiveTab('global')}
             className={`px-4 py-2.5 rounded-t-xl text-xs font-bold tracking-wider transition-all flex items-center gap-2 cursor-pointer border-t border-x ${
@@ -305,12 +440,33 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>FRIENDS PRIVATE LOBBY</span>
+            <span>CHALLENGE ROOMS</span>
             {currentRoomCode && (
               <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-950 text-amber-300 border border-amber-800 animate-pulse">
                 IN ROOM
               </span>
             )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('social')}
+            className={`px-4 py-2.5 rounded-t-xl text-xs font-bold tracking-wider transition-all flex items-center gap-2 cursor-pointer border-t border-x ${
+              activeTab === 'social'
+                ? 'bg-slate-900 text-purple-400 border-purple-500/50 shadow-inner'
+                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-slate-900/40'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>FRIENDS & REQUESTS</span>
+            {friendRequests.length > 0 ? (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-purple-600 text-white animate-bounce">
+                {friendRequests.length} PENDING
+              </span>
+            ) : friendsList.length > 0 ? (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-950 text-purple-300 border border-purple-800">
+                {friendsList.length}
+              </span>
+            ) : null}
           </button>
         </div>
 
@@ -430,14 +586,23 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
 
                           <div className="col-span-2 text-center">
                             {!isMe ? (
-                              <button
-                                onClick={() => setSuingTarget(studio)}
-                                className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-900 border border-rose-700/60 text-rose-300 font-bold text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-1 mx-auto"
-                                title={`File copyright infringement against ${studio.name}`}
-                              >
-                                <Scale className="w-3 h-3" />
-                                <span>SUE</span>
-                              </button>
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => handleSendFriendRequest(studio.name)}
+                                  className="p-1 rounded bg-purple-950/60 hover:bg-purple-900 border border-purple-700/60 text-purple-300 font-bold text-[10px] transition-colors cursor-pointer flex items-center justify-center"
+                                  title={`Send friend request to ${studio.name}`}
+                                >
+                                  <UserPlus className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => setSuingTarget(studio)}
+                                  className="px-1.5 py-1 rounded bg-rose-950/60 hover:bg-rose-900 border border-rose-700/60 text-rose-300 font-bold text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-0.5"
+                                  title={`File copyright infringement against ${studio.name}`}
+                                >
+                                  <Scale className="w-3 h-3" />
+                                  <span>SUE</span>
+                                </button>
+                              </div>
                             ) : (
                               <span className="text-[10px] text-slate-600 font-mono">-</span>
                             )}
@@ -926,6 +1091,223 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
                 </div>
               )}
 
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB 3: FRIENDS & IN-GAME REQUESTS */}
+          {/* ========================================================= */}
+          {activeTab === 'social' && (
+            <div className="space-y-5">
+              {/* Feedback status banner */}
+              {friendActionStatus && (
+                <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                  friendActionStatus.type === 'success'
+                    ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-200'
+                    : 'bg-red-950/80 border-red-500/40 text-red-200'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {friendActionStatus.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                    )}
+                    <span>{friendActionStatus.text}</span>
+                  </div>
+                  <button
+                    onClick={() => setFriendActionStatus(null)}
+                    className="text-xs opacity-70 hover:opacity-100 cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Add Friend Input Box */}
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-purple-500/40 shadow-xl space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
+                    <UserPlus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white tracking-wide">
+                      SEND IN-GAME FRIEND REQUEST
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Enter the exact Studio Name or Multiplayer Player ID of any game developer
+                    </p>
+                  </div>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSendFriendRequest(friendTargetInput);
+                  }}
+                  className="flex gap-2"
+                >
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={friendTargetInput}
+                      onChange={(e) => setFriendTargetInput(e.target.value)}
+                      placeholder="e.g. Acme Interactive or dob_xyz123..."
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-purple-500 focus:outline-none text-xs text-white"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSendingFriendReq || !friendTargetInput.trim()}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-950/50 flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                  >
+                    {isSendingFriendReq ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <UserPlus className="w-3.5 h-3.5" />
+                    )}
+                    <span>Send Request</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* Grid: Pending Requests & Friends List */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                {/* Left: Incoming Pending Requests (5 cols) */}
+                <div className="lg:col-span-5 space-y-3">
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Incoming Requests</span>
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-950 text-purple-300 border border-purple-800">
+                      {friendRequests.length}
+                    </span>
+                  </div>
+
+                  {friendRequests.length === 0 ? (
+                    <div className="p-6 rounded-xl bg-slate-900/40 border border-slate-800/80 text-center text-xs text-slate-500 font-mono">
+                      No incoming friend requests right now.
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {friendRequests.map((req) => (
+                        <div
+                          key={req.requestId}
+                          className="p-3.5 rounded-xl bg-slate-900 border border-purple-500/50 shadow-md space-y-2.5 animate-in fade-in"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <div className="font-bold text-white text-xs flex items-center gap-1.5">
+                                <span>{req.senderStudioName}</span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                Sent {new Date(req.createdAt).toLocaleDateString()}
+                              </div>
+                            </div>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-950 text-purple-300 border border-purple-800">
+                              PENDING
+                            </span>
+                          </div>
+
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={() => handleRespondFriendRequest(req, true)}
+                              className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Accept</span>
+                            </button>
+                            <button
+                              onClick={() => handleRespondFriendRequest(req, false)}
+                              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Decline</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Right: Confirmed Friends Network (7 cols) */}
+                <div className="lg:col-span-7 space-y-3">
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                      <Users className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>My Friends Network</span>
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
+                      {friendsList.length} Connected
+                    </span>
+                  </div>
+
+                  {friendsList.length === 0 ? (
+                    <div className="p-8 rounded-xl bg-slate-900/40 border border-slate-800/80 text-center space-y-2">
+                      <Users className="w-8 h-8 text-slate-600 mx-auto" />
+                      <p className="text-xs text-slate-400 font-mono">
+                        No friends added yet. Connect with other publishers to form alliances or launch private room sprints!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-96 overflow-y-auto">
+                      {friendsList.map((friend) => (
+                        <div
+                          key={friend.friendId}
+                          className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-purple-500/40 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                        >
+                          <div>
+                            <div className="font-bold text-white flex items-center gap-1.5">
+                              <span>{friend.studioName}</span>
+                              <span className="w-2 h-2 rounded-full bg-emerald-400" title="Connected" />
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              Partnered {new Date(friend.addedAt).toLocaleDateString()}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => {
+                                handleGiftFriend(friend);
+                              }}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-emerald-950 border border-slate-700 hover:border-emerald-500/50 text-slate-300 hover:text-emerald-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Wire $5,000 cash grant to friend"
+                            >
+                              <Gift className="w-3 h-3 text-emerald-400" />
+                              <span>Gift $5k</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setActiveTab('friends');
+                              }}
+                              className="px-2 py-1 rounded bg-amber-950/60 hover:bg-amber-900/80 border border-amber-700/60 text-amber-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Invite to challenge room"
+                            >
+                              <Play className="w-3 h-3 text-amber-400" />
+                              <span>Challenge</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleRemoveFriend(friend)}
+                              className="p-1 rounded bg-slate-800 hover:bg-red-950/80 border border-slate-700 hover:border-red-500/50 text-slate-400 hover:text-red-300 cursor-pointer transition-colors"
+                              title="Remove friend"
+                            >
+                              <UserX className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+              </div>
             </div>
           )}
 

@@ -12,7 +12,10 @@ import {
   Check, 
   AlertTriangle,
   Building,
-  Globe
+  Globe,
+  ShieldAlert,
+  Cloud,
+  User
 } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
@@ -31,6 +34,10 @@ interface HeaderProps {
   onResetGame: () => void;
   onOpenMainScreen?: () => void;
   onOpenMultiplayer?: () => void;
+  currentUser?: { email?: string; role?: string } | null;
+  isAdmin?: boolean;
+  onOpenAccount?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -47,7 +54,11 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenOfficeUpgrades,
   onResetGame,
   onOpenMainScreen,
-  onOpenMultiplayer
+  onOpenMultiplayer,
+  currentUser,
+  isAdmin,
+  onOpenAccount,
+  onOpenAdmin
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(studioName);
@@ -237,6 +248,28 @@ export const Header: React.FC<HeaderProps> = ({
           >
             {soundOn ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-slate-500" />}
           </button>
+
+          {onOpenAccount && (
+            <button
+              onClick={onOpenAccount}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-cyan-500/40 text-xs text-slate-300 hover:text-white transition-all cursor-pointer"
+              title="Cloud Save & Account Settings"
+            >
+              <Cloud className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline max-w-[100px] truncate">{currentUser?.email ? currentUser.email.split('@')[0] : 'Account'}</span>
+            </button>
+          )}
+
+          {isAdmin && onOpenAdmin && (
+            <button
+              onClick={onOpenAdmin}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/60 text-xs text-amber-300 font-bold transition-all shadow-md shadow-amber-950/40 cursor-pointer"
+              title="Executive Admin Console: Reset leaderboards, change values, ban accounts"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Admin</span>
+            </button>
+          )}
 
           {onOpenMultiplayer && (
             <button

@@ -51,7 +51,17 @@ import { NewGameModal } from './components/NewGameModal';
 import { GameOverModal } from './components/GameOverModal';
 import { MainScreen } from './components/MainScreen';
 import { MultiplayerModal } from './components/MultiplayerModal';
-import { getOrCreatePlayerId, syncStudioToLobby, sendGlobalChatMessage } from './firebase';
+import { AccountModal } from './components/AccountModal';
+import { AdminModal } from './components/AdminModal';
+import { 
+  getOrCreatePlayerId, 
+  syncStudioToLobby, 
+  sendGlobalChatMessage,
+  UserAccount,
+  isUserAdmin,
+  subscribeToAuth,
+  saveGameToCloud
+} from './firebase';
 
 const STORAGE_KEY = 'DOB_ENTERPRISES_SAVE_V1';
 
@@ -59,6 +69,9 @@ export default function App() {
   // Navigation / Screen state
   const [currentScreen, setCurrentScreen] = useState<'main' | 'game'>('main');
   const [isMultiplayerModalOpen, setIsMultiplayerModalOpen] = useState<boolean>(false);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState<boolean>(false);
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
 
   // Studio Profile
   const [studioName, setStudioName] = useState<string>('DOB Enterprises');
@@ -135,7 +148,7 @@ export default function App() {
     }
   }, []);
 
-  // Auto-save state
+  // Auto-save local state
   useEffect(() => {
     const timer = setInterval(() => {
       try {
@@ -154,6 +167,54 @@ export default function App() {
     }, 5000);
     return () => clearInterval(timer);
   }, [studioName, cash, followers, activeGame, releasedGames, hiredTalent, upgrades, lawsuitHistory]);
+
+  // Subscribe to Firebase Authentication
+  useEffect(() => {
+    const unsub = subscribeToAuth((user) => {
+      setCurrentUser(user);
+    });
+    return () => unsub();
+  }, []);
+
+  // Serialize current game state for cloud saving
+  const getCurrentGameState = useCallback(() => ({
+    studioName,
+    cash,
+    followers,
+    activeGame,
+    releasedGames,
+    hiredTalent,
+    upgrades,
+    lawsuitHistory,
+    lastSaved: Date.now()
+  }), [studioName, cash, followers, activeGame, releasedGames, hiredTalent, upgrades, lawsuitHistory]);
+
+  // Load and apply a state restored from Cloud Save
+  const handleApplyCloudSave = useCallback((loadedData: any) => {
+    if (!loadedData) return;
+    if (loadedData.studioName) setStudioName(loadedData.studioName);
+    if (typeof loadedData.cash === 'number') setCash(loadedData.cash);
+    if (typeof loadedData.followers === 'number') setFollowers(loadedData.followers);
+    if (loadedData.activeGame !== undefined) setActiveGame(loadedData.activeGame);
+    if (Array.isArray(loadedData.releasedGames)) setReleasedGames(loadedData.releasedGames);
+    if (Array.isArray(loadedData.hiredTalent)) setHiredTalent(loadedData.hiredTalent);
+    if (Array.isArray(loadedData.upgrades)) setUpgrades(loadedData.upgrades);
+    if (Array.isArray(loadedData.lawsuitHistory)) setLawsuitHistory(loadedData.lawsuitHistory);
+    soundManager.playCashChime();
+  }, []);
+
+  // Periodic Auto-Cloud Save every 45s if authenticated
+  useEffect(() => {
+    if (!currentUser?.userId || currentUser.isAnonymous) return;
+    const cloudTimer = setInterval(async () => {
+      try {
+        await saveGameToCloud(currentUser.userId, studioName, getCurrentGameState());
+      } catch {}
+    }, 45000);
+    return () => clearInterval(cloudTimer);
+  }, [currentUser, studioName, getCurrentGameState]);
+
+  const isAdmin = isUserAdmin(currentUser?.email, currentUser?.role);
 
   // Dynamic multipliers from upgrades
   const upgradeMultipliers = useMemo(() => {
@@ -823,6 +884,10 @@ export default function App() {
           }}
           onResetGame={handleRestartChapter11}
           onOpenMultiplayer={() => setIsMultiplayerModalOpen(true)}
+          currentUser={currentUser}
+          isAdmin={isAdmin}
+          onOpenAccount={() => setIsAccountModalOpen(true)}
+          onOpenAdmin={() => setIsAdminModalOpen(true)}
         />
         <MultiplayerModal
           isOpen={isMultiplayerModalOpen}
@@ -834,6 +899,29 @@ export default function App() {
           releasedGamesCount={releasedGames.length}
           onDeductCash={(amount) => setCash((prev) => Math.max(0, prev - amount))}
           onAddCash={(amount) => setCash((prev) => prev + amount)}
+          currentUser={currentUser}
+          onOpenAccount={() => setIsAccountModalOpen(true)}
+          onOpenAdmin={() => setIsAdminModalOpen(true)}
+        />
+        <AccountModal
+          isOpen={isAccountModalOpen}
+          onClose={() => setIsAccountModalOpen(false)}
+          currentUser={currentUser}
+          currentGameState={getCurrentGameState()}
+          onLoadGame={handleApplyCloudSave}
+          onOpenAdminConsole={() => {
+            setIsAccountModalOpen(false);
+            setIsAdminModalOpen(true);
+          }}
+        />
+        <AdminModal
+          isOpen={isAdminModalOpen}
+          onClose={() => setIsAdminModalOpen(false)}
+          currentUser={currentUser}
+          onApplyGameStatePatch={(patch) => {
+            if (typeof patch.cash === 'number') setCash(patch.cash);
+            if (typeof patch.followers === 'number') setFollowers(patch.followers);
+          }}
         />
       </>
     );
@@ -857,6 +945,10 @@ export default function App() {
         onResetGame={handleResetGame}
         onOpenMainScreen={() => setCurrentScreen('main')}
         onOpenMultiplayer={() => setIsMultiplayerModalOpen(true)}
+        currentUser={currentUser}
+        isAdmin={isAdmin}
+        onOpenAccount={() => setIsAccountModalOpen(true)}
+        onOpenAdmin={() => setIsAdminModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -1137,6 +1229,33 @@ export default function App() {
         releasedGamesCount={releasedGames.length}
         onDeductCash={(amount) => setCash((prev) => Math.max(0, prev - amount))}
         onAddCash={(amount) => setCash((prev) => prev + amount)}
+        currentUser={currentUser}
+        onOpenAccount={() => setIsAccountModalOpen(true)}
+        onOpenAdmin={() => setIsAdminModalOpen(true)}
+      />
+
+      {/* User Account & Cloud Save Modal */}
+      <AccountModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        currentUser={currentUser}
+        currentGameState={getCurrentGameState()}
+        onLoadGame={handleApplyCloudSave}
+        onOpenAdminConsole={() => {
+          setIsAccountModalOpen(false);
+          setIsAdminModalOpen(true);
+        }}
+      />
+
+      {/* Executive Admin Management Console */}
+      <AdminModal
+        isOpen={isAdminModalOpen}
+        onClose={() => setIsAdminModalOpen(false)}
+        currentUser={currentUser}
+        onApplyGameStatePatch={(patch) => {
+          if (typeof patch.cash === 'number') setCash(patch.cash);
+          if (typeof patch.followers === 'number') setFollowers(patch.followers);
+        }}
       />
     </div>
   );

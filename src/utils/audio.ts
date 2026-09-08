@@ -76,6 +76,14 @@ class SoundManager {
     } catch {}
   }
 
+  playCashSound() {
+    this.playCashChime();
+  }
+
+  playSuccess() {
+    this.playGameRelease();
+  }
+
   // Gavel hit for lawsuits
   playGavel() {
     if (!this.enabled) return;

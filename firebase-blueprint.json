@@ -213,6 +213,130 @@
         }
       },
       "required": ["memberId", "studioName", "cash", "netWorth", "gamesCount", "isReady", "progress", "lastPing"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Registered user account with authentication profile, cloud save payload, and admin authorization",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID or unique player account identifier"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "format": "email"
+        },
+        "studioName": {
+          "type": "string",
+          "description": "Custom registered studio display name",
+          "maxLength": 50
+        },
+        "role": {
+          "type": "string",
+          "description": "Access level of account: player or admin",
+          "enum": ["player", "admin"]
+        },
+        "isBanned": {
+          "type": "boolean",
+          "description": "Account suspension status enforced by administrators"
+        },
+        "banReason": {
+          "type": "string",
+          "description": "Optional administrator note explaining suspension reason",
+          "maxLength": 200
+        },
+        "saveData": {
+          "type": "string",
+          "description": "Serialized game progress payload storing company assets, staff, and titles"
+        },
+        "cash": {
+          "type": "number",
+          "description": "Current studio liquidity in USD"
+        },
+        "netWorth": {
+          "type": "number",
+          "description": "Total studio valuation"
+        },
+        "followers": {
+          "type": "number",
+          "description": "Total studio followers"
+        },
+        "gamesCount": {
+          "type": "number",
+          "description": "Count of released games"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Account registration timestamp"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Latest cloud save timestamp"
+        }
+      },
+      "required": ["userId", "email", "studioName", "role", "isBanned", "createdAt", "updatedAt"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "In-game friend invitations between players and studios",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "description": "Unique request identifier"
+        },
+        "senderId": {
+          "type": "string",
+          "description": "User ID or Player ID of sender"
+        },
+        "senderStudioName": {
+          "type": "string",
+          "description": "Studio name of sender",
+          "maxLength": 50
+        },
+        "receiverId": {
+          "type": "string",
+          "description": "Target Player ID or User ID of recipient"
+        },
+        "receiverStudioName": {
+          "type": "string",
+          "description": "Target Studio name",
+          "maxLength": 50
+        },
+        "status": {
+          "type": "string",
+          "description": "Friend invitation state",
+          "enum": ["pending", "accepted", "declined"]
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp when friend request was sent"
+        }
+      },
+      "required": ["requestId", "senderId", "senderStudioName", "receiverId", "receiverStudioName", "status", "createdAt"]
+    },
+    "Friend": {
+      "title": "Friend",
+      "description": "Confirmed friend connection entry",
+      "type": "object",
+      "properties": {
+        "friendId": {
+          "type": "string",
+          "description": "User ID or Player ID of friend"
+        },
+        "studioName": {
+          "type": "string",
+          "description": "Display name of friend studio",
+          "maxLength": 50
+        },
+        "addedAt": {
+          "type": "number",
+          "description": "Timestamp when friendship was confirmed"
+        }
+      },
+      "required": ["friendId", "studioName", "addedAt"]
     }
   },
   "firestore": {
@@ -235,6 +359,18 @@
     "/rooms/{roomId}/members/{memberId}": {
       "schema": "RoomMember",
       "description": "Participants in a private challenge room"
+    },
+    "/users/{userId}": {
+      "schema": "UserAccount",
+      "description": "User accounts, cloud save records, and admin access levels"
+    },
+    "/users/{userId}/friends/{friendId}": {
+      "schema": "Friend",
+      "description": "User's confirmed friend list"
+    },
+    "/friend_requests/{requestId}": {
+      "schema": "FriendRequest",
+      "description": "In-game friend requests between players"
     }
   }
 }
